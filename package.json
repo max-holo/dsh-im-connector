@@ -1,0 +1,51 @@
+{
+  "name": "dingtalk-connector",
+  "version": "0.1.0",
+  "description": "DingTalk read-only connector: messages, calendar, todo, approval, attendance, reports (logs), docs/wiki. Ships a TypeScript SDK, an MCP server and a CLI.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "dtconn": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "mcp": "node dist/mcp/server.js",
+    "capture": "node dist/cli.js capture",
+    "smoke:mcp": "node scripts/mcp-smoke.mjs",
+    "smoke:e2e": "node --experimental-strip-types scripts/e2e-cli.ts",
+    "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm smoke:mcp && pnpm smoke:e2e"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "dingtalk-stream": "^2.1.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "dingtalk",
+    "connector",
+    "mcp",
+    "calendar",
+    "todo",
+    "approval",
+    "attendance",
+    "report",
+    "docs"
+  ],
+  "license": "MIT",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
