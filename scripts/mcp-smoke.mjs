@@ -1,5 +1,5 @@
-// MCP stdio 冒烟测试：启动编译后的 MCP server，走一遍 initialize → tools/list。
-// 认证复用 dws 本地登录态，tools/list 不触发网络请求。
+// MCP stdio 冒烟测试：启动编译后的 MCP server，走 initialize → tools/list。
+// 期望只有一个 `run` 透传工具。认证复用 dws 本地登录态，tools/list 不触发网络。
 // 用法：先 pnpm build，然后 node scripts/mcp-smoke.mjs
 import { spawn } from "node:child_process";
 
@@ -59,24 +59,11 @@ send({ jsonrpc: "2.0", method: "notifications/initialized" });
 send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
 const tools = await waitFor(2);
 const names = tools.result.tools.map((t) => t.name);
-console.log(`tools/list returned ${names.length} tools`);
-for (const must of [
-  "contact_me",
-  "calendar_today",
-  "todo_list_my_tasks",
-  "approval_list_pending",
-  "attendance_check_result",
-  "report_inbox",
-  "doc_read",
-  "wiki_node_list",
-  "drive_list",
-  "im_chat_messages",
-]) {
-  if (!names.includes(must)) {
-    console.error(`FAIL: missing tool ${must}`);
-    child.kill();
-    process.exit(1);
-  }
+console.log(`tools/list returned ${names.length} tool(s): ${names.join(", ")}`);
+if (names.length !== 1 || names[0] !== "run") {
+  console.error(`FAIL: expected a single "run" tool`);
+  child.kill();
+  process.exit(1);
 }
 child.stdin.end();
 console.log("MCP smoke test OK");

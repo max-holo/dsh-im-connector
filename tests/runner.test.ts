@@ -3,17 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DwsRunner, DwsError, buildFlags } from "../src/index.js";
+import { DwsRunner, DwsError } from "../src/index.js";
 
 const FAKE = fileURLToPath(new URL("./fake-dws.mjs", import.meta.url));
-
-describe("buildFlags", () => {
-  it("emits kebab-case flags, skips empty, joins arrays as CSV, handles booleans", () => {
-    expect(
-      buildFlags({ a: 1, b: "x y", c: true, d: false, e: undefined, f: ["u1", "u2"], g: [] }),
-    ).toEqual(["--a", "1", "--b", "x y", "--c", "--f", "u1,u2"]);
-  });
-});
 
 describe("DwsRunner", () => {
   let dir: string;

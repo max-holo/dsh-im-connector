@@ -1,20 +1,16 @@
 {
   "name": "dingtalk-connector",
-  "version": "0.2.0",
-  "description": "DingTalk read-only connector built on dingtalk-workspace-cli (dws): messages, calendar, todo, approval, attendance, reports, docs/wiki. Ships a TypeScript SDK, an MCP server and a CLI.",
+  "version": "0.3.0",
+  "description": "Unified DingTalk access via a single MCP passthrough tool that forwards dws (dingtalk-workspace-cli) commands.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "dtconn": "./dist/cli.js"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "mcp": "node dist/mcp/server.js",
-    "listen": "node dist/cli.js listen",
     "smoke:mcp": "node scripts/mcp-smoke.mjs",
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm smoke:mcp"
   },
@@ -31,15 +27,9 @@
   },
   "keywords": [
     "dingtalk",
-    "connector",
-    "mcp",
     "dws",
-    "calendar",
-    "todo",
-    "approval",
-    "attendance",
-    "report",
-    "docs"
+    "mcp",
+    "connector"
   ],
   "license": "MIT"
 }

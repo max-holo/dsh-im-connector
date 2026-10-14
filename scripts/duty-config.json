@@ -1,0 +1,49 @@
+{
+  "group": {
+    "name": "平台产品群",
+    "openConversationId": "cidw0VW9uCxoc0ICmTAV4refQ=="
+  },
+  "rotation": [
+    { "name": "杨春艳", "userId": "273667153326283606", "openDingtalkId": "DOZF5my7HbaXe41t8fc6AFb0k9Z9PmLTiP" },
+    { "name": "余海", "userId": "16934533618351091", "openDingtalkId": "DOZF5my7HbaWFyK9SYDiPq8Mm2aUUDDvLw" },
+    { "name": "丁桐", "userId": "4442645524645743", "openDingtalkId": "DOZF5my7HbaViimJiSHDWqrTYOuwTMTKtqh" },
+    { "name": "马玄", "userId": "16484583734606991", "openDingtalkId": "DOZF5my7HbaVdqWMSKwXevIuiiLByCfQar" }
+  ],
+  "anchor": {
+    "firstRestDate": "2026-10-17",
+    "firstPerson": "杨春艳"
+  },
+  "holidays": {
+    "2026": {
+      "restDays": [
+        "2026-01-01", "2026-01-02", "2026-01-03",
+        "2026-02-15", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19",
+        "2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23",
+        "2026-04-04", "2026-04-05", "2026-04-06",
+        "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
+        "2026-06-19", "2026-06-20", "2026-06-21",
+        "2026-09-25", "2026-09-26", "2026-09-27",
+        "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05",
+        "2026-10-06", "2026-10-07"
+      ],
+      "makeupWorkdays": [
+        "2026-01-04",
+        "2026-02-14", "2026-02-28",
+        "2026-05-09",
+        "2026-09-20", "2026-10-10"
+      ]
+    },
+    "2027": {
+      "restDays": [],
+      "makeupWorkdays": []
+    }
+  },
+  "message": {
+    "title": "值班提醒",
+    "lineTemplate": "{date}（{weekday}）：{at}"
+  },
+  "send": {
+    "identity": "user",
+    "aiTag": false
+  }
+}

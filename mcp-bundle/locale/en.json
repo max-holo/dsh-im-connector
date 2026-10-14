@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DingTalk Connector",
+    "description": "Read-only DingTalk access (messages, calendar, todo, approval, attendance, reports, docs) via dws."
+  }
+}
