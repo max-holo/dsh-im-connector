@@ -1,13 +1,10 @@
 // MCP stdio 冒烟测试：启动编译后的 MCP server，走一遍 initialize → tools/list。
+// 认证复用 dws 本地登录态，tools/list 不触发网络请求。
 // 用法：先 pnpm build，然后 node scripts/mcp-smoke.mjs
 import { spawn } from "node:child_process";
 
 const child = spawn(process.execPath, ["dist/mcp/server.js"], {
-  env: {
-    ...process.env,
-    DINGTALK_APP_KEY: "smoke-key",
-    DINGTALK_APP_SECRET: "smoke-secret",
-  },
+  env: { ...process.env },
   stdio: ["pipe", "pipe", "inherit"],
 });
 
@@ -64,15 +61,16 @@ const tools = await waitFor(2);
 const names = tools.result.tools.map((t) => t.name);
 console.log(`tools/list returned ${names.length} tools`);
 for (const must of [
-  "calendar_list_events",
-  "todo_list_tasks",
-  "approval_get_instance",
-  "attendance_list_punch_results",
-  "report_list",
-  "docs_get_blocks",
-  "wiki_list_nodes",
-  "im_list_captured_messages",
-  "contact_search_user",
+  "contact_me",
+  "calendar_today",
+  "todo_list_my_tasks",
+  "approval_list_pending",
+  "attendance_check_result",
+  "report_inbox",
+  "doc_read",
+  "wiki_node_list",
+  "drive_list",
+  "im_chat_messages",
 ]) {
   if (!names.includes(must)) {
     console.error(`FAIL: missing tool ${must}`);

@@ -1,138 +1,116 @@
-import type { ModuleContext } from "../context.js";
-import type { JsonRecord } from "../types.js";
+import type { DwsRunner } from "../dws/runner.js";
+import { buildFlags } from "../dws/flags.js";
 
-/**
- * 文档读取：钉盘/文档空间 + 知识库 + 在线文档内容（块）。
- *
- * 端点（api.dingtalk.com，企业内部应用 accessToken + 操作人 unionId）：
- * - 空间列表:     GET /v1.0/drive/spaces?unionId&maxResults&nextToken
- * - 文件列表:     GET /v1.0/drive/spaces/{spaceId}/files?unionId&parentId&maxResults&nextToken
- * - 知识库列表:   GET /v2.0/wiki/workspaces?operatorId&maxResults&nextToken&orderBy
- * - 知识库节点:   GET /v2.0/wiki/nodes?parentNodeId&operatorId&maxResults&nextToken
- * - 文档块查询:   GET /v1.0/doc/suites/documents/{docKey}/blocks?operatorId&startIndex&endIndex&blockType
- *   （docKey 可为文档 docKey 或 dentryUuid；知识库节点的 nodeId 即 dentryUuid）
- */
+export interface DocListOptions {
+  folder?: string;
+  workspace?: string;
+  limit?: number;
+  cursor?: string;
+  pageAll?: boolean;
+  maxItems?: number;
+}
+
+export interface WikiNodeListOptions {
+  workspace: string;
+  folder?: string;
+  limit?: number;
+  cursor?: string;
+  pageAll?: boolean;
+}
+
+export interface DriveListOptions {
+  spaceId?: string;
+  folder?: string;
+  limit?: number;
+  cursor?: string;
+  orderBy?: "createTime" | "modifyTime" | "name";
+  order?: "asc" | "desc";
+  pageAll?: boolean;
+}
+
+/** 文档/知识库/钉盘读取（dws doc + wiki + drive）。 */
 export class DocsModule {
-  constructor(private readonly ctx: ModuleContext) {}
+  constructor(private readonly runner: DwsRunner) {}
 
-  /** 获取（钉盘/文档）空间列表。 */
-  async listSpaces(
-    unionId: string,
-    opts?: { maxResults?: number; nextToken?: string },
-  ): Promise<{ spaces: JsonRecord[]; nextPageToken?: string; hasMore: boolean }> {
-    const body = await this.ctx.http.api<{ spaces?: JsonRecord[]; nextPageToken?: string }>(
-      "GET",
-      "/v1.0/drive/spaces",
-      {
-        query: {
-          unionId,
-          maxResults: opts?.maxResults ?? 100,
-          ...(opts?.nextToken ? { nextToken: opts.nextToken } : {}),
-        },
-      },
-    );
-    return {
-      spaces: body.spaces ?? [],
-      nextPageToken: body.nextPageToken,
-      hasMore: Boolean(body.nextPageToken),
-    };
+  /** 读取在线文档正文（Markdown）。 */
+  readDoc(node: string, opts?: { version?: number }): Promise<unknown> {
+    return this.runner.runJson(["doc", "read", ...buildFlags({ node, version: opts?.version })]);
   }
 
-  /** 获取空间下的文件/文件夹列表。 */
-  async listFiles(
-    spaceId: string,
-    unionId: string,
-    opts?: { parentId?: string; maxResults?: number; nextToken?: string },
-  ): Promise<{ files: JsonRecord[]; nextPageToken?: string; hasMore: boolean }> {
-    const body = await this.ctx.http.api<{ files?: JsonRecord[]; nextPageToken?: string }>(
-      "GET",
-      `/v1.0/drive/spaces/${encodeURIComponent(spaceId)}/files`,
-      {
-        query: {
-          unionId,
-          ...(opts?.parentId ? { parentId: opts.parentId } : {}),
-          maxResults: opts?.maxResults ?? 100,
-          ...(opts?.nextToken ? { nextToken: opts.nextToken } : {}),
-        },
-      },
-    );
-    return {
-      files: body.files ?? [],
-      nextPageToken: body.nextPageToken,
-      hasMore: Boolean(body.nextPageToken),
-    };
+  /** 文档元信息。 */
+  docInfo(node: string): Promise<unknown> {
+    return this.runner.runJson(["doc", "info", ...buildFlags({ node })]);
   }
 
-  /** 获取知识库（wiki）列表。 */
-  async listWikiWorkspaces(
-    unionId: string,
-    opts?: { maxResults?: number; nextToken?: string; orderBy?: string },
-  ): Promise<{ workspaces: JsonRecord[]; nextToken?: string; hasMore: boolean }> {
-    const body = await this.ctx.http.api<{ workspaces?: JsonRecord[]; nextToken?: string }>(
-      "GET",
-      "/v2.0/wiki/workspaces",
-      {
-        query: {
-          operatorId: unionId,
-          maxResults: opts?.maxResults ?? 30,
-          ...(opts?.nextToken ? { nextToken: opts.nextToken } : {}),
-          ...(opts?.orderBy ? { orderBy: opts.orderBy } : {}),
-        },
-      },
-    );
-    return {
-      workspaces: body.workspaces ?? [],
-      nextToken: body.nextToken,
-      hasMore: Boolean(body.nextToken),
-    };
+  /** 列出文档文件夹/知识库下的直接子节点。 */
+  listDocChildren(opts: DocListOptions = {}): Promise<unknown> {
+    return this.runner.runJson([
+      "doc",
+      "+list",
+      ...buildFlags({
+        folder: opts.folder,
+        workspace: opts.workspace,
+        limit: opts.limit,
+        cursor: opts.cursor,
+        "page-all": opts.pageAll,
+        "max-items": opts.maxItems,
+      }),
+    ]);
   }
 
-  /** 获取知识库节点列表（parentNodeId 可为知识库的 rootNodeId）。 */
-  async listWikiNodes(
-    parentNodeId: string,
-    unionId: string,
-    opts?: { maxResults?: number; nextToken?: string },
-  ): Promise<{ nodes: JsonRecord[]; nextToken?: string; hasMore: boolean }> {
-    const body = await this.ctx.http.api<{ nodes?: JsonRecord[]; nextToken?: string }>(
-      "GET",
-      "/v2.0/wiki/nodes",
-      {
-        query: {
-          parentNodeId,
-          operatorId: unionId,
-          maxResults: opts?.maxResults ?? 50,
-          ...(opts?.nextToken ? { nextToken: opts.nextToken } : {}),
-        },
-      },
-    );
-    return {
-      nodes: body.nodes ?? [],
-      nextToken: body.nextToken,
-      hasMore: Boolean(body.nextToken),
-    };
+  /** 按关键词搜索云文档。 */
+  findDoc(query: string, opts?: { limit?: number }): Promise<unknown> {
+    return this.runner.runJson(["doc", "+find-doc", ...buildFlags({ query, limit: opts?.limit })]);
   }
 
-  /**
-   * 查询在线文档的一级块元素（文档内容读取）。
-   * @param docKey 文档 docKey 或 dentryUuid（知识库节点 nodeId 即 dentryUuid）
-   */
-  async getDocBlocks(
-    docKey: string,
-    unionId: string,
-    opts?: { startIndex?: number; endIndex?: number; blockType?: string },
-  ): Promise<JsonRecord[]> {
-    const body = await this.ctx.http.api<{
-      success?: boolean;
-      result?: { data?: JsonRecord[] };
-      data?: JsonRecord[];
-    }>("GET", `/v1.0/doc/suites/documents/${encodeURIComponent(docKey)}/blocks`, {
-      query: {
-        operatorId: unionId,
-        ...(opts?.startIndex !== undefined ? { startIndex: opts.startIndex } : {}),
-        ...(opts?.endIndex !== undefined ? { endIndex: opts.endIndex } : {}),
-        ...(opts?.blockType ? { blockType: opts.blockType } : {}),
-      },
-    });
-    return body.result?.data ?? body.data ?? [];
+  /** 知识库列表。 */
+  listWikiSpaces(opts?: { type?: "orgWikiSpace" | "myWikiSpace"; pageAll?: boolean }): Promise<unknown> {
+    return this.runner.runJson([
+      "wiki",
+      "+space-list",
+      ...buildFlags({ type: opts?.type, "page-all": opts?.pageAll }),
+    ]);
+  }
+
+  /** 知识库节点列表。 */
+  listWikiNodes(opts: WikiNodeListOptions): Promise<unknown> {
+    return this.runner.runJson([
+      "wiki",
+      "+node-list",
+      ...buildFlags({
+        workspace: opts.workspace,
+        folder: opts.folder,
+        limit: opts.limit,
+        cursor: opts.cursor,
+        "page-all": opts.pageAll,
+      }),
+    ]);
+  }
+
+  /** 钉盘文件/文件夹列表。 */
+  listDrive(opts: DriveListOptions = {}): Promise<unknown> {
+    return this.runner.runJson([
+      "drive",
+      "+list",
+      ...buildFlags({
+        "space-id": opts.spaceId,
+        folder: opts.folder,
+        limit: opts.limit,
+        cursor: opts.cursor,
+        "order-by": opts.orderBy,
+        order: opts.order,
+        "page-all": opts.pageAll,
+      }),
+    ]);
+  }
+
+  /** 钉盘节点元数据。 */
+  driveInfo(node: string, opts?: { spaceId?: string }): Promise<unknown> {
+    return this.runner.runJson(["drive", "+info", ...buildFlags({ node, "space-id": opts?.spaceId })]);
+  }
+
+  /** 最近访问/编辑的文档列表。 */
+  driveRecent(): Promise<unknown> {
+    return this.runner.runJson(["drive", "+recent"]);
   }
 }

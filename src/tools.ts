@@ -1,5 +1,4 @@
 import type { DingTalkConnector } from "./connector.js";
-import type { CapturedMessageFilter } from "./capture.js";
 
 export type ToolParamType = "string" | "number" | "boolean" | "array" | "object";
 
@@ -8,9 +7,8 @@ export interface ToolParam {
   type: ToolParamType;
   description: string;
   required?: boolean;
-  /** For type === "array": the item type. */
+  /** For type === "array": item type. */
   itemType?: "string" | "number";
-  /** For type === "string": allowed values. */
   enumValues?: string[];
 }
 
@@ -37,21 +35,15 @@ export function toolJsonSchema(tool: ToolDef): ToolJsonSchema {
     properties[p.name] = prop;
     if (p.required) required.push(p.name);
   }
-  return {
-    type: "object",
-    properties,
-    ...(required.length > 0 ? { required } : {}),
-  };
+  return { type: "object", properties, ...(required.length > 0 ? { required } : {}) };
 }
 
-/** Validate args against a tool's params. Returns a list of error messages (empty = valid). */
 export function validateToolArgs(tool: ToolDef, args: Record<string, unknown> | undefined): string[] {
   const errors: string[] = [];
   const input = args ?? {};
-  const unknownParams = Object.keys(input).filter(
-    (k) => !tool.params.some((p) => p.name === k),
-  );
-  for (const k of unknownParams) errors.push(`Unknown parameter: ${k}`);
+  for (const k of Object.keys(input)) {
+    if (!tool.params.some((p) => p.name === k)) errors.push(`Unknown parameter: ${k}`);
+  }
   for (const p of tool.params) {
     const value = input[p.name];
     if (value === undefined || value === null) {
@@ -82,430 +74,431 @@ export function validateToolArgs(tool: ToolDef, args: Record<string, unknown> | 
   return errors;
 }
 
-const ROLE_TYPES = ["executor", "creator", "participant"] as const;
+const ROLE = ["executor", "creator", "participant"];
 
 /**
- * 只读工具注册表：MCP server 与 CLI 共用同一份定义与处理器。
- * 所有工具均为读取操作，不产生任何写入。
+ * 只读工具注册表：MCP server 与 CLI 共用。
+ * 每个工具对应一条 dws 命令，返回该命令解析后的 JSON payload（透传，保留完整性信号）。
  */
 export const toolList: ToolDef[] = [
-  // ---------------- 通讯录（ID 体系入口） ----------------
+  // ---------------- 通讯录 ----------------
+  {
+    name: "contact_me",
+    description: "查看我自己的通讯录资料（姓名/userId/手机/部门/组织）。对应 dws contact +me。",
+    params: [],
+    handler: (conn) => conn.contacts.me(),
+  },
   {
     name: "contact_search_user",
-    description: "按姓名/拼音搜索企业通讯录用户，返回 userId 等基础信息。",
-    params: [
-      { name: "queryWord", type: "string", required: true, description: "搜索关键词（姓名、拼音或英文名）" },
-      { name: "size", type: "number", description: "分页大小，最大 50，默认 20" },
-    ],
-    handler: (conn, args) =>
-      conn.contacts.searchUser(args.queryWord, { size: args.size }),
+    description: "按姓名/拼音搜索通讯录用户，返回 userId 等基础信息。对应 dws contact +search-user。",
+    params: [{ name: "query", type: "string", required: true, description: "搜索关键词（姓名、拼音或花名）" }],
+    handler: (conn, args) => conn.contacts.searchUser(args.query),
   },
   {
-    name: "contact_get_user",
-    description: "查询用户详情（姓名、unionId、部门、职位、手机号等）。userId → unionId 也用此工具。",
-    params: [{ name: "userid", type: "string", required: true, description: "用户 userId" }],
-    handler: (conn, args) => conn.contacts.getUser(args.userid),
-  },
-  {
-    name: "contact_get_userid_by_mobile",
-    description: "根据完整手机号查询用户 userId。",
-    params: [{ name: "mobile", type: "string", required: true, description: "手机号" }],
-    handler: (conn, args) => conn.contacts.getUserIdByMobile(args.mobile),
-  },
-  {
-    name: "contact_get_userid_by_unionid",
-    description: "根据 unionId 查询用户 userId。",
-    params: [{ name: "unionid", type: "string", required: true, description: "用户 unionId" }],
-    handler: (conn, args) => conn.contacts.getUserIdByUnionId(args.unionid),
-  },
-  {
-    name: "contact_get_unionid",
-    description: "根据 userId 查询用户 unionId（日历/待办/文档等工具需要 unionId）。",
-    params: [{ name: "userid", type: "string", required: true, description: "用户 userId" }],
-    handler: (conn, args) => conn.contacts.getUnionId(args.userid).then((unionId) => ({ unionId })),
-  },
-  {
-    name: "contact_list_department_userids",
-    description: "获取指定部门下所有成员的 userId 列表（自动翻页）。根部门 ID 为 1。",
-    params: [
-      { name: "deptId", type: "number", required: true, description: "部门 ID，根部门为 1" },
-      { name: "maxItems", type: "number", description: "最多返回数量，默认 500" },
-    ],
-    handler: (conn, args) =>
-      conn.contacts.listDepartmentUserIds(args.deptId, { maxItems: args.maxItems }),
+    name: "contact_department_members",
+    description: "按部门名列出部门直接成员（仅本部门）。对应 dws contact +dept-members。",
+    params: [{ name: "dept", type: "string", required: true, description: "部门名称或关键词" }],
+    handler: (conn, args) => conn.contacts.listDepartmentMembers(args.dept),
   },
   {
     name: "contact_list_sub_departments",
-    description: "获取指定部门的子部门列表。",
-    params: [
-      { name: "deptParentId", type: "number", description: "父部门 ID，默认 1（根部门）" },
-    ],
-    handler: (conn, args) => conn.contacts.listSubDepartments(args.deptParentId ?? 1),
+    description: "查看指定部门的直属子部门（根部门为 1）。对应 dws contact +list-sub-depts。",
+    params: [{ name: "deptParentId", type: "number", required: true, description: "父部门 ID（根部门为 1）" }],
+    handler: (conn, args) => conn.contacts.listSubDepartments(args.deptParentId),
   },
 
-  // ---------------- 日历 / 日程 ----------------
+  // ---------------- 日历 ----------------
   {
-    name: "calendar_list_calendars",
-    description: "获取用户可见的日历列表（calendarId 通常用 primary 表示主日历）。",
-    params: [
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "maxResults", type: "number", description: "分页大小，默认 100" },
-      { name: "nextToken", type: "string", description: "分页游标（上一页返回）" },
-    ],
-    handler: (conn, args) =>
-      conn.calendar.listCalendars(args.unionId, {
-        maxResults: args.maxResults,
-        nextToken: args.nextToken,
-      }),
+    name: "calendar_today",
+    description: "列出我今天的日程。对应 dws calendar +today。",
+    params: [],
+    handler: (conn) => conn.calendar.today(),
   },
   {
-    name: "calendar_list_events",
-    description:
-      "按时间范围查询用户日程（自动翻页）。timeMin/timeMax 为 ISO-8601 时间，如 2026-10-01T00:00:00+08:00。",
+    name: "calendar_tomorrow",
+    description: "列出我明天的日程。对应 dws calendar +tomorrow。",
+    params: [],
+    handler: (conn) => conn.calendar.tomorrow(),
+  },
+  {
+    name: "calendar_week",
+    description: "列出我本周的日程。对应 dws calendar +week。",
+    params: [],
+    handler: (conn) => conn.calendar.week(),
+  },
+  {
+    name: "calendar_agenda",
+    description: "按时间范围查询日程列表（ISO-8601 时间）。对应 dws calendar +agenda。",
     params: [
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "timeMin", type: "string", required: true, description: "起始时间（ISO-8601 或 Unix 毫秒）" },
-      { name: "timeMax", type: "string", required: true, description: "结束时间（ISO-8601 或 Unix 毫秒）" },
+      { name: "start", type: "string", description: "开始时间 ISO-8601，默认今天 00:00" },
+      { name: "end", type: "string", description: "结束时间 ISO-8601，默认今天 23:59" },
       { name: "calendarId", type: "string", description: "日历 ID，默认 primary" },
-      { name: "maxItems", type: "number", description: "最多返回数量，默认 200" },
+      { name: "limit", type: "number", description: "每页条数 1-100" },
     ],
     handler: (conn, args) =>
-      conn.calendar.collectEvents(args.unionId, args.timeMin, args.timeMax, {
+      conn.calendar.agenda({
+        start: args.start,
+        end: args.end,
         calendarId: args.calendarId,
-        maxItems: args.maxItems,
+        limit: args.limit,
       }),
   },
   {
     name: "calendar_get_event",
-    description: "查询单个日程详情。",
+    description: "查询单个日程详情。对应 dws calendar +get。",
     params: [
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "eventId", type: "string", required: true, description: "日程 ID" },
+      { name: "eventId", type: "string", required: true, description: "日程 eventId" },
       { name: "calendarId", type: "string", description: "日历 ID，默认 primary" },
     ],
-    handler: (conn, args) =>
-      conn.calendar.getEvent(args.unionId, args.eventId, { calendarId: args.calendarId }),
+    handler: (conn, args) => conn.calendar.getEvent(args.eventId, { calendarId: args.calendarId }),
   },
   {
-    name: "calendar_list_event_attendees",
-    description: "获取日程参与者列表。",
+    name: "calendar_freebusy",
+    description: "查询用户/会议室在某时间段的忙闲状态。对应 dws calendar +freebusy。",
     params: [
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "eventId", type: "string", required: true, description: "日程 ID" },
-      { name: "calendarId", type: "string", description: "日历 ID，默认 primary" },
-      { name: "nextToken", type: "string", description: "分页游标（上一页返回）" },
+      { name: "start", type: "string", required: true, description: "开始时间 ISO-8601" },
+      { name: "end", type: "string", required: true, description: "结束时间 ISO-8601" },
+      { name: "users", type: "array", itemType: "string", description: "用户 userId 列表（逗号分隔）" },
+      { name: "rooms", type: "array", itemType: "string", description: "会议室 roomId 列表" },
     ],
     handler: (conn, args) =>
-      conn.calendar.listEventAttendees(args.unionId, args.eventId, {
-        calendarId: args.calendarId,
-        nextToken: args.nextToken,
-      }),
+      conn.calendar.freeBusy({ start: args.start, end: args.end, users: args.users, rooms: args.rooms }),
+  },
+  {
+    name: "calendar_list_books",
+    description: "查询用户可见的日历本列表。对应 dws calendar +book-list。",
+    params: [],
+    handler: (conn) => conn.calendar.listBooks(),
   },
 
   // ---------------- 待办 ----------------
   {
-    name: "todo_list_tasks",
-    description: "查询用户钉钉待办任务列表（企业维度，自动翻页）。",
-    params: [
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "isDone", type: "boolean", description: "完成状态：true 已完成，false 未完成；不传查全部" },
-      {
-        name: "roleTypes",
-        type: "array",
-        itemType: "string",
-        enumValues: [...ROLE_TYPES],
-        description: "角色过滤（多选，或关系）：executor 执行人 / creator 创建人 / participant 参与人",
-      },
-      { name: "maxItems", type: "number", description: "最多返回数量，默认 200" },
-    ],
-    handler: (conn, args) =>
-      conn.todo.collectTasks(args.unionId, {
-        isDone: args.isDone,
-        roleTypes: args.roleTypes ? (args.roleTypes as string[]).map((r) => [r]) : undefined,
-        maxItems: args.maxItems,
-      }),
+    name: "todo_list_my_tasks",
+    description: "查询当前组织下我的待办列表。对应 dws todo +get-my-tasks。",
+    params: [],
+    handler: (conn) => conn.todo.listMyTasks(),
   },
   {
-    name: "todo_get_task",
-    description: "查询单个待办任务详情。",
+    name: "todo_list_related_tasks",
+    description: "列出与我相关的全部待办（创建/执行/参与三角色并集）。对应 dws todo +get-related-tasks。",
+    params: [],
+    handler: (conn) => conn.todo.listRelatedTasks(),
+  },
+  {
+    name: "todo_list_created",
+    description: "列出我创建的待办。对应 dws todo +created-todos。",
+    params: [],
+    handler: (conn) => conn.todo.listCreated(),
+  },
+  {
+    name: "todo_due_today",
+    description: "列出我今天到期的待办。对应 dws todo +due-today。",
+    params: [],
+    handler: (conn) => conn.todo.dueToday(),
+  },
+  {
+    name: "todo_overdue",
+    description: "列出我已过期未完成的待办。对应 dws todo +overdue。",
+    params: [],
+    handler: (conn) => conn.todo.overdue(),
+  },
+  {
+    name: "todo_get",
+    description: "查询单个待办详情。对应 dws todo +get。",
+    params: [{ name: "taskId", type: "string", required: true, description: "待办任务 ID" }],
+    handler: (conn, args) => conn.todo.get(args.taskId),
+  },
+  {
+    name: "todo_search",
+    description: "按标题关键词搜索与我相关的待办。对应 dws todo +search。",
     params: [
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "taskId", type: "string", required: true, description: "待办任务 ID" },
+      { name: "query", type: "string", required: true, description: "标题关键词" },
+      { name: "status", type: "string", enumValues: ["true", "false"], description: "完成状态过滤" },
     ],
-    handler: (conn, args) => conn.todo.getTask(args.unionId, args.taskId),
+    handler: (conn, args) => conn.todo.search(args.query, { status: args.status }),
   },
 
   // ---------------- 审批 ----------------
   {
-    name: "approval_list_forms",
-    description: "获取指定用户可见的审批模板列表（processCode 从结果的 process_code 字段获取）。",
-    params: [
-      { name: "userid", type: "string", required: true, description: "用户 userId" },
-      { name: "offset", type: "number", description: "分页偏移，默认 0" },
-      { name: "size", type: "number", description: "分页大小，默认 100" },
-    ],
-    handler: (conn, args) =>
-      conn.approval.listVisibleForms(args.userid, { offset: args.offset, size: args.size }),
+    name: "approval_list_pending",
+    description: "查询待我处理的审批。对应 dws oa approval list-pending。",
+    params: [],
+    handler: (conn) => conn.approval.listPending(),
   },
   {
-    name: "approval_list_instance_ids",
-    description:
-      "按审批模板 + 时间范围获取审批实例 ID 列表（自动翻页）。startTime 距今不能超过 120 天。先用 approval_list_forms 拿 processCode。",
-    params: [
-      { name: "processCode", type: "string", required: true, description: "审批模板唯一码" },
-      { name: "startTime", type: "string", required: true, description: "起始时间（ISO-8601 或 Unix 毫秒）" },
-      { name: "endTime", type: "string", description: "结束时间，默认当前时间" },
-      {
-        name: "statuses",
-        type: "array",
-        itemType: "string",
-        enumValues: ["RUNNING", "TERMINATED", "COMPLETED"],
-        description: "实例状态过滤：RUNNING 审批中 / TERMINATED 已撤销 / COMPLETED 已完成",
-      },
-      { name: "userIds", type: "array", itemType: "string", description: "发起人 userId 列表（≤10）" },
-      { name: "maxItems", type: "number", description: "最多返回数量，默认 200" },
-    ],
-    handler: (conn, args) =>
-      conn.approval.listInstanceIds(args.processCode, args.startTime, {
-        endTime: args.endTime,
-        userIds: args.userIds,
-        statuses: args.statuses,
-        maxItems: args.maxItems,
-      }),
+    name: "approval_list_executed",
+    description: "查询我处理过的审批。对应 dws oa approval list-executed。",
+    params: [],
+    handler: (conn) => conn.approval.listExecuted(),
+  },
+  {
+    name: "approval_list_cc",
+    description: "查询抄送我的审批单。对应 dws oa approval list-cc。",
+    params: [],
+    handler: (conn) => conn.approval.listCc(),
+  },
+  {
+    name: "approval_list_submitted",
+    description: "查询我发起的审批单。对应 dws oa approval list-submitted。",
+    params: [],
+    handler: (conn) => conn.approval.listSubmitted(),
+  },
+  {
+    name: "approval_list_forms",
+    description: "查询我可见的审批表单（模板）列表。对应 dws oa approval list-forms。",
+    params: [],
+    handler: (conn) => conn.approval.listForms(),
+  },
+  {
+    name: "approval_search_forms",
+    description: "按关键字搜索我可见的审批表单。对应 dws oa approval search-forms。",
+    params: [{ name: "keyword", type: "string", required: true, description: "搜索关键字" }],
+    handler: (conn, args) => conn.approval.searchForms(args.keyword),
   },
   {
     name: "approval_get_instance",
-    description: "获取审批实例详情（表单内容、审批任务、操作记录、附件等）。",
-    params: [
-      { name: "processInstanceId", type: "string", required: true, description: "审批实例 ID" },
-    ],
-    handler: (conn, args) => conn.approval.getInstance(args.processInstanceId),
+    description: "获取审批实例详情（表单内容与状态）。对应 dws oa approval detail。",
+    params: [{ name: "instanceId", type: "string", required: true, description: "审批实例 ID" }],
+    handler: (conn, args) => conn.approval.getInstance(args.instanceId),
   },
   {
-    name: "approval_get_todo_count",
-    description: "获取用户待审批数量。",
-    params: [{ name: "userid", type: "string", required: true, description: "用户 userId" }],
-    handler: (conn, args) => conn.approval.getTodoCount(args.userid),
+    name: "approval_get_records",
+    description: "获取审批操作记录。对应 dws oa approval records。",
+    params: [{ name: "instanceId", type: "string", required: true, description: "审批实例 ID" }],
+    handler: (conn, args) => conn.approval.getRecords(args.instanceId),
   },
 
   // ---------------- 考勤 ----------------
   {
-    name: "attendance_list_punch_results",
-    description:
-      "获取打卡结果（每人每天上下班结论：正常/迟到/早退/未打卡等）。自动按 50 人/7 天分片。dateFrom/dateTo 为 ISO-8601 或 Unix 毫秒。",
-    params: [
-      { name: "userIds", type: "array", itemType: "string", required: true, description: "用户 userId 列表" },
-      { name: "dateFrom", type: "string", required: true, description: "查询起始工作日" },
-      { name: "dateTo", type: "string", required: true, description: "查询结束工作日" },
-    ],
-    handler: (conn, args) =>
-      conn.attendance.listPunchResults(args.userIds, args.dateFrom, args.dateTo),
+    name: "attendance_my_today",
+    description: "查我今天的考勤打卡记录。对应 dws attendance +my-attendance。",
+    params: [],
+    handler: (conn) => conn.attendance.today(),
   },
   {
-    name: "attendance_list_punch_details",
-    description:
-      "获取打卡详情（每一次实际打卡记录：时间、地点、设备、是否合法等）。自动按 50 人/7 天分片。",
-    params: [
-      { name: "userIds", type: "array", itemType: "string", required: true, description: "用户 userId 列表" },
-      { name: "dateFrom", type: "string", required: true, description: "查询起始时间" },
-      { name: "dateTo", type: "string", required: true, description: "查询结束时间" },
-    ],
-    handler: (conn, args) =>
-      conn.attendance.listPunchDetails(args.userIds, args.dateFrom, args.dateTo),
+    name: "attendance_my_month",
+    description: "查我本月的考勤打卡记录。对应 dws attendance +this-month。",
+    params: [],
+    handler: (conn) => conn.attendance.thisMonth(),
   },
   {
-    name: "attendance_list_checkin_records",
-    description: "获取部门用户「签到」记录（外勤签到，非考勤打卡）。时间范围 ≤ 45 天。",
+    name: "attendance_check_result",
+    description:
+      "批量查询打卡结果（正常/迟到/早退/缺卡）。users 最多 100 人，区间 ≤ 1 个月，日期 YYYY-MM-DD。对应 dws attendance +check-result。",
     params: [
-      { name: "departmentId", type: "number", required: true, description: "部门 ID，根部门为 1" },
-      { name: "startTime", type: "string", required: true, description: "起始时间（ISO-8601 或 Unix 毫秒）" },
-      { name: "endTime", type: "string", required: true, description: "结束时间（ISO-8601 或 Unix 毫秒）" },
+      { name: "users", type: "array", itemType: "string", required: true, description: "用户 userId 列表（逗号分隔，≤100）" },
+      { name: "start", type: "string", required: true, description: "开始日期 YYYY-MM-DD" },
+      { name: "end", type: "string", required: true, description: "结束日期 YYYY-MM-DD" },
+      { name: "limit", type: "number", description: "每页条数，默认 100" },
+      { name: "offset", type: "number", description: "偏移量，默认 0" },
     ],
     handler: (conn, args) =>
-      conn.attendance.listCheckinRecords(args.departmentId, args.startTime, args.endTime),
+      conn.attendance.checkResult({
+        users: args.users,
+        start: args.start,
+        end: args.end,
+        limit: args.limit,
+        offset: args.offset,
+      }),
   },
   {
-    name: "attendance_list_user_checkin_records",
-    description:
-      "获取指定用户的「签到」记录。单人时间范围 ≤ 10 天；多人（≤10 人）≤ 1 天。",
+    name: "attendance_summary",
+    description: "查询某人的考勤统计摘要（周/月）。对应 dws attendance +get-summary。",
     params: [
-      { name: "userIds", type: "array", itemType: "string", required: true, description: "用户 userId 列表（≤10）" },
-      { name: "startTime", type: "string", required: true, description: "起始时间（ISO-8601 或 Unix 毫秒）" },
-      { name: "endTime", type: "string", required: true, description: "结束时间（ISO-8601 或 Unix 毫秒）" },
+      { name: "user", type: "string", required: true, description: "钉钉用户 userId" },
+      { name: "date", type: "string", required: true, description: "周期内任意日期 YYYY-MM-DD" },
+      { name: "statsType", type: "string", required: true, enumValues: ["week", "month"], description: "统计类型 week/month" },
     ],
     handler: (conn, args) =>
-      conn.attendance.listUserCheckinRecords(args.userIds, args.startTime, args.endTime),
+      conn.attendance.summary({ user: args.user, date: args.date, statsType: args.statsType }),
   },
 
-  // ---------------- 日志（日报/周报） ----------------
+  // ---------------- 日志 ----------------
   {
-    name: "report_list",
-    description:
-      "查询日志记录（日报/周报/月报，自动翻页）。startTime/endTime 为 ISO-8601 或 Unix 毫秒，区间 ≤ 180 天。",
-    params: [
-      { name: "startTime", type: "string", required: true, description: "日志创建起始时间" },
-      { name: "endTime", type: "string", required: true, description: "日志创建结束时间" },
-      { name: "userid", type: "string", description: "按员工 userId 过滤；不传查全企业（需权限）" },
-      { name: "templateName", type: "string", description: "按模板名称过滤，如 日报/周报" },
-      { name: "maxItems", type: "number", description: "最多返回数量，默认 200" },
-    ],
-    handler: (conn, args) =>
-      conn.report.listReports(args.startTime, args.endTime, {
-        userid: args.userid,
-        templateName: args.templateName,
-        maxItems: args.maxItems,
-      }),
+    name: "report_inbox",
+    description: "列出我收到的日志（日报/周报）。对应 dws report inbox list。",
+    params: [],
+    handler: (conn) => conn.report.inbox(),
   },
   {
-    name: "report_list_templates",
-    description: "获取（用户可见的）日志模板列表。",
-    params: [{ name: "userid", type: "string", description: "员工 userId；不传查全部模板" }],
-    handler: (conn, args) => conn.report.listTemplates(args.userid),
+    name: "report_outbox",
+    description: "列出我发出的日志。对应 dws report outbox list。",
+    params: [],
+    handler: (conn) => conn.report.outbox(),
   },
   {
-    name: "report_get_template",
-    description: "按名称获取日志模板详情（含字段定义）。",
-    params: [
-      { name: "templateName", type: "string", required: true, description: "模板名称，如 日报" },
-      { name: "userid", type: "string", required: true, description: "有权限查看该模板的用户 userId" },
-    ],
-    handler: (conn, args) => conn.report.getTemplateByName(args.templateName, args.userid),
+    name: "report_get",
+    description: "读取单份日志正文。对应 dws report entry get。",
+    params: [{ name: "reportId", type: "string", required: true, description: "日志 ID" }],
+    handler: (conn, args) => conn.report.get(args.reportId),
+  },
+  {
+    name: "report_templates",
+    description: "获取可用日志模板列表。对应 dws report template list。",
+    params: [],
+    handler: (conn) => conn.report.templates(),
   },
 
-  // ---------------- 文档（钉盘/知识库/文档内容） ----------------
+  // ---------------- 文档 / 知识库 / 钉盘 ----------------
   {
-    name: "docs_list_spaces",
-    description: "获取用户可访问的存储空间列表（钉盘/文档空间）。",
+    name: "doc_read",
+    description: "读取在线文档正文（Markdown）。node 可为文档 ID 或 alidocs URL。对应 dws doc read。",
     params: [
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "maxResults", type: "number", description: "分页大小，默认 100" },
-      { name: "nextToken", type: "string", description: "分页游标（上一页返回）" },
+      { name: "node", type: "string", required: true, description: "文档 ID 或 URL" },
+      { name: "version", type: "number", description: "读取指定历史版本号（0=初始版本）" },
     ],
-    handler: (conn, args) =>
-      conn.docs.listSpaces(args.unionId, { maxResults: args.maxResults, nextToken: args.nextToken }),
+    handler: (conn, args) => conn.docs.readDoc(args.node, { version: args.version }),
   },
   {
-    name: "docs_list_files",
-    description: "获取空间下的文件/文件夹列表（不传 parentId 时列根目录）。",
+    name: "doc_info",
+    description: "获取文档元信息（标题/类型/创建者/权限）。对应 dws doc info。",
+    params: [{ name: "node", type: "string", required: true, description: "文档 ID 或 URL" }],
+    handler: (conn, args) => conn.docs.docInfo(args.node),
+  },
+  {
+    name: "doc_list",
+    description: "列出文档文件夹/知识库下的直接子节点。对应 dws doc +list。",
     params: [
-      { name: "spaceId", type: "string", required: true, description: "空间 ID（docs_list_spaces 获取）" },
-      { name: "unionId", type: "string", required: true, description: "用户 unionId" },
-      { name: "parentId", type: "string", description: "父文件夹 ID；不传列根目录" },
-      { name: "maxResults", type: "number", description: "分页大小，默认 100" },
-      { name: "nextToken", type: "string", description: "分页游标（上一页返回）" },
+      { name: "folder", type: "string", description: "文档文件夹 nodeId 或 URL" },
+      { name: "workspace", type: "string", description: "知识库 ID" },
+      { name: "limit", type: "number", description: "每页数量（≤50）" },
+      { name: "pageAll", type: "boolean", description: "有界读取全部后续页" },
     ],
     handler: (conn, args) =>
-      conn.docs.listFiles(args.spaceId, args.unionId, {
-        parentId: args.parentId,
-        maxResults: args.maxResults,
-        nextToken: args.nextToken,
+      conn.docs.listDocChildren({ folder: args.folder, workspace: args.workspace, limit: args.limit, pageAll: args.pageAll }),
+  },
+  {
+    name: "doc_find",
+    description: "按关键词搜索云文档。对应 dws doc +find-doc。",
+    params: [
+      { name: "query", type: "string", required: true, description: "搜索关键词" },
+      { name: "limit", type: "number", description: "返回条数限制" },
+    ],
+    handler: (conn, args) => conn.docs.findDoc(args.query, { limit: args.limit }),
+  },
+  {
+    name: "wiki_space_list",
+    description: "浏览知识库列表。对应 dws wiki +space-list。",
+    params: [
+      { name: "type", type: "string", enumValues: ["orgWikiSpace", "myWikiSpace"], description: "知识库类型，默认 orgWikiSpace" },
+      { name: "pageAll", type: "boolean", description: "自动取完所有页" },
+    ],
+    handler: (conn, args) => conn.docs.listWikiSpaces({ type: args.type, pageAll: args.pageAll }),
+  },
+  {
+    name: "wiki_node_list",
+    description: "浏览知识库节点列表。对应 dws wiki +node-list。",
+    params: [
+      { name: "workspace", type: "string", required: true, description: "知识库 ID" },
+      { name: "folder", type: "string", description: "父节点 ID" },
+      { name: "limit", type: "number", description: "每页数量（≤50）" },
+      { name: "pageAll", type: "boolean", description: "自动取完所有页" },
+    ],
+    handler: (conn, args) =>
+      conn.docs.listWikiNodes({ workspace: args.workspace, folder: args.folder, limit: args.limit, pageAll: args.pageAll }),
+  },
+  {
+    name: "drive_list",
+    description: "浏览钉盘文件/文件夹。对应 dws drive +list。",
+    params: [
+      { name: "spaceId", type: "string", description: "钉盘空间 ID（纯数字）" },
+      { name: "folder", type: "string", description: "父节点 dentryUuid，不传列根目录" },
+      { name: "limit", type: "number", description: "每页数量（≤50）" },
+      { name: "orderBy", type: "string", enumValues: ["createTime", "modifyTime", "name"], description: "排序字段" },
+      { name: "order", type: "string", enumValues: ["asc", "desc"], description: "排序方向" },
+      { name: "pageAll", type: "boolean", description: "有界读取全部后续页" },
+    ],
+    handler: (conn, args) =>
+      conn.docs.listDrive({
+        spaceId: args.spaceId,
+        folder: args.folder,
+        limit: args.limit,
+        orderBy: args.orderBy,
+        order: args.order,
+        pageAll: args.pageAll,
       }),
   },
   {
-    name: "wiki_list_workspaces",
-    description: "获取知识库列表（返回 rootNodeId，用于 wiki_list_nodes 遍历节点）。",
+    name: "drive_info",
+    description: "获取钉盘节点元数据。对应 dws drive +info。",
     params: [
-      { name: "unionId", type: "string", required: true, description: "操作人 unionId" },
-      { name: "maxResults", type: "number", description: "分页大小，最大 30，默认 30" },
-      { name: "nextToken", type: "string", description: "分页游标（上一页返回）" },
+      { name: "node", type: "string", required: true, description: "节点 dentryUuid" },
+      { name: "spaceId", type: "string", description: "节点所属空间 ID" },
     ],
-    handler: (conn, args) =>
-      conn.docs.listWikiWorkspaces(args.unionId, {
-        maxResults: args.maxResults,
-        nextToken: args.nextToken,
-      }),
+    handler: (conn, args) => conn.docs.driveInfo(args.node, { spaceId: args.spaceId }),
   },
   {
-    name: "wiki_list_nodes",
-    description: "获取知识库节点列表（parentNodeId 为知识库 rootNodeId 或某节点的 nodeId/dentryUuid）。",
-    params: [
-      { name: "parentNodeId", type: "string", required: true, description: "父节点 ID（rootNodeId 或 nodeId）" },
-      { name: "unionId", type: "string", required: true, description: "操作人 unionId" },
-      { name: "maxResults", type: "number", description: "分页大小，最大 50，默认 50" },
-      { name: "nextToken", type: "string", description: "分页游标（上一页返回）" },
-    ],
-    handler: (conn, args) =>
-      conn.docs.listWikiNodes(args.parentNodeId, args.unionId, {
-        maxResults: args.maxResults,
-        nextToken: args.nextToken,
-      }),
-  },
-  {
-    name: "docs_get_blocks",
-    description:
-      "读取在线文档内容（一级块元素，含文本段落等）。docKey 可为文档 docKey 或 dentryUuid（wiki 节点的 nodeId 即 dentryUuid）。",
-    params: [
-      { name: "docKey", type: "string", required: true, description: "文档 docKey 或 dentryUuid" },
-      { name: "unionId", type: "string", required: true, description: "操作人 unionId" },
-      { name: "startIndex", type: "number", description: "起始块位置（≥0）" },
-      { name: "endIndex", type: "number", description: "结束块位置（≥0）" },
-      { name: "blockType", type: "string", description: "按块类型过滤，如 paragraph" },
-    ],
-    handler: (conn, args) =>
-      conn.docs.getDocBlocks(args.docKey, args.unionId, {
-        startIndex: args.startIndex,
-        endIndex: args.endIndex,
-        blockType: args.blockType,
-      }),
+    name: "drive_recent",
+    description: "获取最近访问/编辑的文档列表。对应 dws drive +recent。",
+    params: [],
+    handler: (conn) => conn.docs.driveRecent(),
   },
 
-  // ---------------- 消息（IM） ----------------
+  // ---------------- 消息 ----------------
   {
     name: "im_list_conversations",
-    description: "获取应用可见的企业会话（群）列表。",
+    description: "列出当前用户加入的会话（默认群聊，可含单聊）。对应 dws chat +chat-list。",
     params: [
-      { name: "offset", type: "number", description: "分页偏移，默认 0" },
-      { name: "size", type: "number", description: "分页大小，默认 100" },
+      { name: "types", type: "array", itemType: "string", enumValues: ["group", "p2p"], description: "会话类型 group/p2p" },
+      { name: "pageAll", type: "boolean", description: "自动读取全部会话分页" },
     ],
-    handler: (conn, args) => conn.messages.listConversations({ offset: args.offset, size: args.size }),
+    handler: (conn, args) => conn.messages.listConversations({ types: args.types, pageAll: args.pageAll }),
   },
   {
-    name: "im_get_conversation",
-    description: "查询群会话信息（标题、成员数、群主等）。",
-    params: [
-      { name: "openConversationId", type: "string", required: true, description: "群会话 openConversationId" },
-    ],
-    handler: (conn, args) => conn.messages.getConversation(args.openConversationId),
+    name: "im_my_groups",
+    description: "列出我加入的群。对应 dws chat +my-groups。",
+    params: [],
+    handler: (conn) => conn.messages.myGroups(),
   },
   {
-    name: "im_list_group_members",
-    description: "查询场景群成员列表。",
+    name: "im_unread_chats",
+    description: "列出我有未读消息的会话。对应 dws chat +unread-chats。",
+    params: [],
+    handler: (conn) => conn.messages.unreadChats(),
+  },
+  {
+    name: "im_chat_messages",
+    description: "读取指定群聊/单聊的消息记录（历史消息）。对应 dws chat +chat-messages。",
     params: [
-      { name: "openConversationId", type: "string", required: true, description: "群会话 openConversationId" },
-      { name: "maxResults", type: "number", description: "分页大小，默认 100" },
-      { name: "nextToken", type: "string", description: "分页游标（上一页返回）" },
+      { name: "group", type: "string", description: "群名或 openConversationId" },
+      { name: "user", type: "string", description: "单聊对方 userId" },
+      { name: "start", type: "string", description: "范围开始时间（含，RFC3339 或 YYYY-MM-DD HH:mm:ss）" },
+      { name: "end", type: "string", description: "范围结束时间（不含）" },
+      { name: "order", type: "string", enumValues: ["asc", "desc"], description: "遍历顺序" },
+      { name: "limit", type: "number", description: "每页条数" },
+      { name: "pageAll", type: "boolean", description: "自动读取全部页" },
     ],
     handler: (conn, args) =>
-      conn.messages.listSceneGroupMembers(args.openConversationId, {
-        maxResults: args.maxResults,
-        nextToken: args.nextToken,
+      conn.messages.chatMessages({
+        group: args.group,
+        user: args.user,
+        start: args.start,
+        end: args.end,
+        order: args.order,
+        limit: args.limit,
+        pageAll: args.pageAll,
       }),
   },
   {
-    name: "im_list_captured_messages",
-    description:
-      "读取 Stream 捕获的实时消息（本地存储）。需要先运行 capture 命令并开通机器人 Stream 模式。钉钉不提供任意历史消息读取。",
+    name: "im_search_messages",
+    description: "按发送者/关键词/@对象/时间等条件搜索消息。对应 dws chat +search-msg。",
     params: [
-      { name: "conversationId", type: "string", description: "按会话 ID 过滤" },
-      { name: "conversationType", type: "string", description: "1=单聊 2=群聊" },
-      { name: "senderStaffId", type: "string", description: "按发送者 userId 过滤" },
-      { name: "keyword", type: "string", description: "按内容关键词过滤" },
-      { name: "from", type: "string", description: "捕获时间下界（ISO-8601）" },
-      { name: "to", type: "string", description: "捕获时间上界（ISO-8601）" },
-      { name: "limit", type: "number", description: "最多返回条数，默认 50" },
+      { name: "query", type: "string", description: "搜索关键词" },
+      { name: "group", type: "string", description: "群名或 openConversationId" },
+      { name: "senders", type: "array", itemType: "string", description: "发送者姓名/userId 列表" },
+      { name: "atMe", type: "boolean", description: "只搜 @我 的消息" },
+      { name: "days", type: "number", description: "回溯天数，默认 7" },
+      { name: "pageAll", type: "boolean", description: "自动连续拉取所有页" },
     ],
-    handler: (conn, args) => {
-      const filter: CapturedMessageFilter = {
-        conversationId: args.conversationId,
-        conversationType: args.conversationType,
-        senderStaffId: args.senderStaffId,
-        keyword: args.keyword,
-        from: args.from,
-        to: args.to,
-        limit: args.limit ?? 50,
-      };
-      return conn.messages.listCapturedMessages(filter);
-    },
+    handler: (conn, args) =>
+      conn.messages.searchMessages({
+        query: args.query,
+        group: args.group,
+        senders: args.senders,
+        atMe: args.atMe,
+        days: args.days,
+        pageAll: args.pageAll,
+      }),
   },
 ];
 

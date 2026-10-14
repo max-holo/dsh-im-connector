@@ -1,8 +1,7 @@
 import type { ConnectorOptions, ResolvedConnectorOptions } from "./config.js";
 import { resolveOptions } from "./config.js";
-import { TokenManager } from "./token.js";
-import { Http } from "./http.js";
-import type { ModuleContext } from "./context.js";
+import { DwsRunner } from "./dws/runner.js";
+import type { DwsRunOptions } from "./dws/runner.js";
 import { ContactsModule } from "./modules/contacts.js";
 import { CalendarModule } from "./modules/calendar.js";
 import { TodoModule } from "./modules/todo.js";
@@ -13,18 +12,14 @@ import { DocsModule } from "./modules/docs.js";
 import { MessagesModule } from "./modules/messages.js";
 
 /**
- * 钉钉只读连接器。
+ * 基于 dingtalk-workspace-cli（dws）的钉钉只读连接器。
  *
- * 覆盖：消息（会话 + Stream 捕获）、日历日程、待办、审批、考勤、日志（日报/周报）、
- * 文档（钉盘/知识库/文档内容）、通讯录。
- *
- * 使用企业内部应用的 AppKey/AppSecret 获取 accessToken，
- * 各模块以 userId / unionId 指定数据归属。
+ * 认证由 dws 本地 OAuth 登录态管理（`dws auth login`），连接器本身不保存凭据；
+ * 各域读取能力通过 `dws <service> <+shortcut|command>` 的 JSON 输出透传实现。
  */
 export class DingTalkConnector {
   readonly options: ResolvedConnectorOptions;
-  readonly token: TokenManager;
-  readonly http: Http;
+  readonly runner: DwsRunner;
 
   readonly contacts: ContactsModule;
   readonly calendar: CalendarModule;
@@ -35,18 +30,29 @@ export class DingTalkConnector {
   readonly docs: DocsModule;
   readonly messages: MessagesModule;
 
-  constructor(options: ConnectorOptions) {
+  constructor(options: ConnectorOptions = {}) {
     this.options = resolveOptions(options);
-    this.token = new TokenManager(this.options);
-    this.http = new Http(this.options, this.token);
-    const ctx: ModuleContext = { http: this.http, options: this.options };
-    this.contacts = new ContactsModule(ctx);
-    this.calendar = new CalendarModule(ctx);
-    this.todo = new TodoModule(ctx);
-    this.approval = new ApprovalModule(ctx);
-    this.attendance = new AttendanceModule(ctx);
-    this.report = new ReportModule(ctx);
-    this.docs = new DocsModule(ctx);
-    this.messages = new MessagesModule(ctx);
+    this.runner = new DwsRunner({
+      bin: this.options.dwsBin,
+      timeoutSec: this.options.timeoutSec,
+    });
+    this.contacts = new ContactsModule(this.runner);
+    this.calendar = new CalendarModule(this.runner);
+    this.todo = new TodoModule(this.runner);
+    this.approval = new ApprovalModule(this.runner);
+    this.attendance = new AttendanceModule(this.runner);
+    this.report = new ReportModule(this.runner);
+    this.docs = new DocsModule(this.runner);
+    this.messages = new MessagesModule(this.runner);
+  }
+
+  /** 逃生舱：直接运行任意 dws 命令并返回解析后的 JSON。 */
+  run(args: string[], opts?: Omit<DwsRunOptions, "profile"> & { profile?: string }): Promise<unknown> {
+    return this.runner.runJson(args, {
+      profile: opts?.profile ?? this.options.profile,
+      timeoutSec: opts?.timeoutSec,
+      signal: opts?.signal,
+      env: { ...this.options.env, ...opts?.env },
+    });
   }
 }

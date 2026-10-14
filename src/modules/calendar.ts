@@ -1,135 +1,62 @@
-import type { ModuleContext } from "../context.js";
-import type { DateInput, JsonRecord } from "../types.js";
-import { toIsoDateTime } from "../util.js";
+import type { DwsRunner } from "../dws/runner.js";
+import { buildFlags } from "../dws/flags.js";
 
-export interface CalendarPage<T> {
-  items: T[];
-  nextToken?: string;
-  hasMore: boolean;
+export interface AgendaOptions {
+  start?: string;
+  end?: string;
+  calendarId?: string;
+  limit?: number;
+  cursor?: string;
 }
 
-/**
- * 日历/日程读取。
- *
- * 端点（api.dingtalk.com，企业内部应用 accessToken + 用户 unionId）：
- * - 日历列表:   GET /v1.0/calendar/users/{unionId}/calendars
- * - 日程视图:   GET /v1.0/calendar/users/{unionId}/calendars/{calendarId}/eventsview
- * - 日程详情:   GET /v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}
- * - 参与者列表: GET /v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}/attendees
- *
- * calendarId 通常传 "primary"（用户主日历）。
- */
+export interface FreeBusyOptions {
+  start: string;
+  end: string;
+  users?: string[];
+  rooms?: string[];
+}
+
+/** 日历/日程读取（dws calendar）。 */
 export class CalendarModule {
-  constructor(private readonly ctx: ModuleContext) {}
+  constructor(private readonly runner: DwsRunner) {}
 
-  /** 获取用户可见的日历列表。 */
-  async listCalendars(
-    unionId: string,
-    opts?: { maxResults?: number; nextToken?: string },
-  ): Promise<CalendarPage<JsonRecord>> {
-    const body = await this.ctx.http.api<{ calendars?: JsonRecord[]; nextPageToken?: string }>(
-      "GET",
-      `/v1.0/calendar/users/${encodeURIComponent(unionId)}/calendars`,
-      {
-        query: {
-          maxResults: opts?.maxResults ?? 100,
-          ...(opts?.nextToken ? { nextToken: opts.nextToken } : {}),
-        },
-      },
-    );
-    const items = body.calendars ?? [];
-    return {
-      items,
-      nextToken: body.nextPageToken,
-      hasMore: Boolean(body.nextPageToken),
-    };
+  today(): Promise<unknown> {
+    return this.runner.runJson(["calendar", "+today"]);
   }
 
-  /** 按时间范围查询日程（日程视图 eventsview）。 */
-  async listEvents(
-    unionId: string,
-    timeMin: DateInput,
-    timeMax: DateInput,
-    opts?: { calendarId?: string; maxResults?: number; nextToken?: string; maxAttendees?: number },
-  ): Promise<CalendarPage<JsonRecord>> {
-    const calendarId = encodeURIComponent(opts?.calendarId ?? "primary");
-    const body = await this.ctx.http.api<{ events?: JsonRecord[]; nextToken?: string }>(
-      "GET",
-      `/v1.0/calendar/users/${encodeURIComponent(unionId)}/calendars/${calendarId}/eventsview`,
-      {
-        query: {
-          timeMin: toIsoDateTime(timeMin),
-          timeMax: toIsoDateTime(timeMax),
-          maxAttendees: opts?.maxAttendees ?? 20,
-          maxResults: opts?.maxResults ?? 50,
-          ...(opts?.nextToken ? { nextToken: opts.nextToken } : {}),
-        },
-      },
-    );
-    const items = body.events ?? [];
-    return {
-      items,
-      nextToken: body.nextToken,
-      hasMore: Boolean(body.nextToken),
-    };
+  tomorrow(): Promise<unknown> {
+    return this.runner.runJson(["calendar", "+tomorrow"]);
   }
 
-  /** 按时间范围收集日程（自动翻页，受 maxItems 限制）。 */
-  async collectEvents(
-    unionId: string,
-    timeMin: DateInput,
-    timeMax: DateInput,
-    opts?: { calendarId?: string; maxItems?: number; maxAttendees?: number },
-  ): Promise<{ events: JsonRecord[]; truncated: boolean }> {
-    const maxItems = Math.min(opts?.maxItems ?? 200, 1000);
-    const events: JsonRecord[] = [];
-    let nextToken: string | undefined;
-    for (let page = 0; page < 50; page += 1) {
-      const res = await this.listEvents(unionId, timeMin, timeMax, {
-        calendarId: opts?.calendarId,
-        maxAttendees: opts?.maxAttendees,
-        nextToken,
-      });
-      events.push(...res.items);
-      nextToken = res.nextToken;
-      if (!nextToken || events.length >= maxItems) break;
-    }
-    const truncated = events.length > maxItems;
-    return { events: truncated ? events.slice(0, maxItems) : events, truncated };
+  week(): Promise<unknown> {
+    return this.runner.runJson(["calendar", "+week"]);
+  }
+
+  /** 按时间范围查询日程列表。 */
+  agenda(opts: AgendaOptions = {}): Promise<unknown> {
+    return this.runner.runJson(["calendar", "+agenda", ...buildFlags({ ...opts })]);
   }
 
   /** 查询单个日程详情。 */
-  async getEvent(
-    unionId: string,
-    eventId: string,
-    opts?: { calendarId?: string; maxAttendees?: number },
-  ): Promise<JsonRecord> {
-    const calendarId = encodeURIComponent(opts?.calendarId ?? "primary");
-    return this.ctx.http.api<JsonRecord>(
-      "GET",
-      `/v1.0/calendar/users/${encodeURIComponent(unionId)}/calendars/${calendarId}/events/${encodeURIComponent(eventId)}`,
-      { query: { maxAttendees: opts?.maxAttendees ?? 20 } },
-    );
+  getEvent(event: string, opts?: { calendarId?: string }): Promise<unknown> {
+    return this.runner.runJson([
+      "calendar",
+      "+get",
+      ...buildFlags({ event, "calendar-id": opts?.calendarId }),
+    ]);
   }
 
-  /** 获取日程参与者列表。 */
-  async listEventAttendees(
-    unionId: string,
-    eventId: string,
-    opts?: { calendarId?: string; maxResults?: number; nextToken?: string },
-  ): Promise<CalendarPage<JsonRecord>> {
-    const calendarId = encodeURIComponent(opts?.calendarId ?? "primary");
-    const body = await this.ctx.http.api<{ attendees?: JsonRecord[]; nextToken?: string }>(
-      "GET",
-      `/v1.0/calendar/users/${encodeURIComponent(unionId)}/calendars/${calendarId}/events/${encodeURIComponent(eventId)}/attendees`,
-      {
-        query: {
-          maxResults: opts?.maxResults ?? 100,
-          ...(opts?.nextToken ? { nextToken: opts.nextToken } : {}),
-        },
-      },
-    );
-    const items = body.attendees ?? [];
-    return { items, nextToken: body.nextToken, hasMore: Boolean(body.nextToken) };
+  /** 查询用户/会议室闲忙。 */
+  freeBusy(opts: FreeBusyOptions): Promise<unknown> {
+    return this.runner.runJson([
+      "calendar",
+      "+freebusy",
+      ...buildFlags({ start: opts.start, end: opts.end, users: opts.users, rooms: opts.rooms }),
+    ]);
+  }
+
+  /** 日历本列表。 */
+  listBooks(): Promise<unknown> {
+    return this.runner.runJson(["calendar", "+book-list"]);
   }
 }

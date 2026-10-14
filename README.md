@@ -1,205 +1,146 @@
-# DingTalk Connector（钉钉只读连接器）
+# DingTalk Connector（基于 dws 的钉钉只读连接器）
 
-连接钉钉开放平台的只读连接器：一套 TypeScript SDK 同时提供 **MCP Server**（给 AI Agent /
-MCP 客户端用）、**CLI**（人工验证用）和**模块化 SDK**（程序集成用）。
+基于 **[dingtalk-workspace-cli](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli)**（`dws`）实现的钉钉只读连接器：
+一套 TypeScript SDK 同时提供 **MCP Server**、**CLI** 和**模块化 SDK**，覆盖 7 大读取域。
 
-覆盖 7 大读取域：
+> 核心思路：认证与产品调用全部交给 dws（本地 OAuth 登录态 + 成熟命令面），
+> 本连接器在其上提供类型化模块、48 个只读工具、统一错误映射与 MCP/CLI 入口。
 
-| 域 | 读取能力 | 核心端点 |
+## 能力矩阵
+
+| 域 | 读取能力 | 底层 dws 命令 |
 |---|---|---|
-| 消息 | 企业会话列表、群信息、场景群成员、**Stream 实时消息捕获**（本地落盘可查） | `/chat/list`、`/v1.0/im/conversations/*`、Stream `/v1.0/im/bot/messages/get` |
-| 日历 | 日历列表、按时间范围查日程、日程详情、参与者 | `/v1.0/calendar/users/{unionId}/calendars/*` |
-| 待办 | 用户待办列表（按角色/状态过滤）、详情 | `/v1.0/todo/users/{unionId}/org/tasks/query` |
-| 审批 | 可见审批模板、实例 ID 列表、实例详情（表单/任务/操作记录）、待审批数量 | `/v1.0/workflow/*`、`/topapi/process/*` |
-| 考勤 | 打卡结果、打卡详情、部门/用户签到记录 | `/attendance/list`、`/attendance/listRecord`、`/checkin/record` |
-| 日志 | 日志记录（日报/周报）、模板列表、模板详情 | `/topapi/report/*` |
-| 文档 | 空间列表、文件列表、知识库列表/节点、**文档内容（块）** | `/v1.0/drive/*`、`/v2.0/wiki/*`、`/v1.0/doc/suites/documents/*` |
-| 通讯录 | 用户详情/搜索、手机号/unionId 反查、部门成员/子部门（ID 体系入口） | `/topapi/v2/user/*`、`/v1.0/contact/users/search` |
+| 消息 | 会话列表、我加入的群、未读会话、**历史消息读取**、消息搜索、**Stream 实时监听** | `chat +chat-list` / `+my-groups` / `+chat-messages` / `+search-msg` / `event +listen-im` |
+| 日历 | 今天/明天/本周日程、时间范围日程、日程详情、闲忙、日历本 | `calendar +today/+tomorrow/+week/+agenda/+get/+freebusy/+book-list` |
+| 待办 | 我的待办、与我相关的待办、我创建的/今日到期/逾期、详情、搜索 | `todo +get-my-tasks/+get-related-tasks/+created-todos/+due-today/+overdue/+get/+search` |
+| 审批 | 待我审批/已处理/抄送我/我发起的、表单列表/搜索、实例详情、操作记录 | `oa approval list-pending/list-executed/list-cc/list-submitted/list-forms/detail/records` |
+| 考勤 | 今日/本月打卡、批量打卡结果、考勤统计摘要（周/月） | `attendance +my-attendance/+this-month/+check-result/+get-summary` |
+| 日志 | 收件箱/发件箱、单份正文、模板列表 | `report inbox list/outbox list/entry get/template list` |
+| 文档 | 文档正文（Markdown）、元信息、子节点、搜索、知识库列表/节点、钉盘列表/详情/最近 | `doc read/info/+list/+find-doc`、`wiki +space-list/+node-list`、`drive +list/+info/+recent` |
+| 通讯录 | 我自己、按姓名搜索、部门成员、子部门 | `contact +me/+search-user/+dept-members/+list-sub-depts` |
 
-所有端点均已对照钉钉开放平台官方文档逐一核对（`open.dingtalk.com/document/...`）。
+## 前置条件
 
-## 设计要点
+```bash
+# 1) 安装 dws
+npm install -g dingtalk-workspace-cli
 
-- **只读**：所有工具/方法均为读取操作，不产生任何写入。
-- **企业内部应用凭证**：AppKey/AppSecret 换取 `accessToken`，自动缓存、提前刷新；
-  各模块以 `userId` / `unionId` 指定数据归属。
-- **双域名适配**：新 REST（`api.dingtalk.com`，header 鉴权）与旧 OAPI
-  （`oapi.dingtalk.com`，query 鉴权 + `errcode` 语义）统一封装。
-- **健壮性**：请求超时、429/5xx/网络错误指数退避重试、统一 `DingTalkError` 错误映射。
-- **分片与翻页**：考勤自动按 50 人/7 天分片；列表类接口自动跟随 `nextToken` /
-  `next_cursor` 并带截断保护。
-- **一套工具注册表**：MCP 与 CLI 共用同一份工具定义（33 个工具），行为完全一致。
+# 2) 登录（浏览器扫码）；无头环境用 --device；国际版加 --intl
+dws auth login --recommend --format json
+dws auth status --format json   # 验证 authenticated / token_valid
+```
+
+连接器**不保存任何钉钉凭据**——认证完全复用 dws 的本地登录态与 profile 体系。
 
 ## 安装与构建
 
 ```bash
 pnpm install
 pnpm build     # tsc -> dist/
-pnpm test      # 42 个用例（mock 钉钉服务器，无需真实凭证）
+pnpm verify    # typecheck + 20 测试 + build + MCP 冒烟（本地 fake dws，无需真实账号）
 ```
 
-Node ≥ 18.17（开发环境为 Node 22）。
-
-## 凭证准备（一次性）
-
-1. 登录[钉钉开发者后台](https://open-dev.dingtalk.com/) → 应用开发 → 创建**企业内部应用**。
-2. 在「凭证与基础信息」页获取 **AppKey** 和 **AppSecret**。
-3. 在「权限管理」中申请以下读取权限（按需）：
-
-| 模块 | 权限点（官方 code） |
-|---|---|
-| 考勤 | `qyapi_get_attendance_data`（考勤数据读权限） |
-| 审批 | `Workflow.Instance.Read`（工作流实例读权限） |
-| 知识库 | `Wiki.Workspace.Read`（知识库读权限）、`Wiki.Node.Read`（知识库节点读权限） |
-| 文档内容 | `Storage.File.Read`（企业存储文件读权限） |
-| 日历/待办/日志/通讯录/钉盘 | 在权限管理中按产品名搜索并申请对应**读权限**（如"日程读权限"、"待办读权限"、"日志读权限"、"通讯录员工信息读权限"等） |
-
-4. 若需要**消息捕获**：应用能力 → 添加「机器人」，消息接收模式选择 **Stream 模式**，发布。
-
-## 配置
-
-环境变量（复制 `.env.example`）：
-
-```bash
-DINGTALK_APP_KEY=dingxxxxxxxx
-DINGTALK_APP_SECRET=xxxxxxxxxxxx
-# 可选
-# DINGTALK_API_BASE / DINGTALK_OAPI_BASE  覆盖域名（测试/代理）
-# DINGTALK_CAPTURE_FILE=./.dingtalk-capture.jsonl  消息捕获落盘文件
-```
+Node ≥ 18.17（开发环境 Node 22）。
 
 ## 使用
 
 ### 1. CLI
 
 ```bash
-# 列出全部 33 个只读工具
-node dist/cli.js tools
+node dist/cli.js tools                            # 列出 48 个只读工具
+node dist/cli.js status                           # 查看 dws 登录态
 
-# 通讯录找人 → 拿 unionId（日历/待办/文档都需要）
-node dist/cli.js call contact_search_user '{"queryWord":"张三"}'
-node dist/cli.js call contact_get_user '{"userid":"0420xxxx"}'
+node dist/cli.js call contact_me                  # 通讯录：我自己
+node dist/cli.js call contact_search_user '{"query":"张三"}'
+node dist/cli.js call calendar_today              # 日历：今天
+node dist/cli.js call calendar_agenda '{"start":"2026-10-01T00:00:00+08:00","end":"2026-10-08T00:00:00+08:00"}'
+node dist/cli.js call todo_list_my_tasks          # 待办
+node dist/cli.js call approval_list_pending       # 审批
+node dist/cli.js call attendance_check_result '{"users":["<userId>"],"start":"2026-10-01","end":"2026-10-07"}'
+node dist/cli.js call report_inbox                # 日志收件箱
+node dist/cli.js call wiki_space_list             # 知识库
+node dist/cli.js call im_my_groups                # 我加入的群
+node dist/cli.js call im_chat_messages '{"group":"研发群","limit":20}'   # 历史消息
 
-# 日历：本周日程
-node dist/cli.js call calendar_list_events \
-  '{"unionId":"tXguNxxxx","timeMin":"2026-10-13T00:00:00+08:00","timeMax":"2026-10-20T00:00:00+08:00"}'
+# 逃生舱：直接运行任意 dws 命令
+node dist/cli.js raw calendar +week
 
-# 待办 / 审批 / 考勤 / 日志
-node dist/cli.js call todo_list_tasks '{"unionId":"tXguNxxxx","isDone":false}'
-node dist/cli.js call approval_list_forms '{"userid":"0420xxxx"}'
-node dist/cli.js call approval_list_instance_ids '{"processCode":"PROC-xxxx","startTime":"2026-07-01"}'
-node dist/cli.js call attendance_list_punch_results '{"userIds":["0420xxxx"],"dateFrom":"2026-10-01","dateTo":"2026-10-14"}'
-node dist/cli.js call report_list '{"startTime":"2026-10-01","endTime":"2026-10-14","templateName":"日报"}'
-
-# 文档：知识库 → 节点 → 正文
-node dist/cli.js call wiki_list_workspaces '{"unionId":"tXguNxxxx"}'
-node dist/cli.js call wiki_list_nodes '{"parentNodeId":"<rootNodeId>","unionId":"tXguNxxxx"}'
-node dist/cli.js call docs_get_blocks '{"docKey":"<nodeId 即 dentryUuid>","unionId":"tXguNxxxx"}'
-
-# 消息：实时捕获（Ctrl+C 停止），然后查询捕获到的消息
-node dist/cli.js capture
-node dist/cli.js call im_list_captured_messages '{"keyword":"部署","limit":20}'
+# 实时监听 IM（@我 / 指定群 / 全部群聊），Ctrl+C 停止
+node dist/cli.js listen --kind at-me --max-events 5
+node dist/cli.js listen --kind group --chat-id <openConversationId>
 ```
 
 ### 2. MCP Server（stdio）
-
-任何 MCP 客户端可接入：
 
 ```json
 {
   "mcpServers": {
     "dingtalk": {
       "command": "node",
-      "args": ["D:\\dingtalk\\dist\\mcp\\server.js"],
-      "env": {
-        "DINGTALK_APP_KEY": "dingxxxxxxxx",
-        "DINGTALK_APP_SECRET": "xxxxxxxxxxxx"
-      }
+      "args": ["D:\\dingtalk\\dist\\mcp\\server.js"]
     }
   }
 }
 ```
 
-DSH 用户可在「MCP 连接」中按同样方式登记（command + args + env）。
+无需在配置里放密钥；`dws` 需在 PATH 上（或用 `DINGTALK_DWS_BIN` 指向 dws 入口）。
 
 ### 3. SDK
 
 ```ts
 import { DingTalkConnector } from "dingtalk-connector";
 
-const conn = new DingTalkConnector({
-  appKey: process.env.DINGTALK_APP_KEY!,
-  appSecret: process.env.DINGTALK_APP_SECRET!,
-});
+const conn = new DingTalkConnector(); // 可选 { profile, timeoutSec, dwsBin }
 
-// ID 体系：userId → unionId
-const unionId = await conn.contacts.getUnionId("0420xxxx");
-
-// 日历：本周日程
-const { events } = await conn.calendar.collectEvents(
-  unionId,
-  "2026-10-13T00:00:00+08:00",
-  "2026-10-20T00:00:00+08:00",
-);
-
-// 审批：某模板最近实例 + 详情
-const { instanceIds } = await conn.approval.listInstanceIds("PROC-xxxx", "2026-07-01");
-const detail = await conn.approval.getInstance(instanceIds[0]);
-
-// 日志 / 考勤 / 待办 / 文档
-const { reports } = await conn.report.listReports("2026-10-01", "2026-10-14");
-const { records } = await conn.attendance.listPunchDetails(["0420xxxx"], "2026-10-01", "2026-10-07");
-const { tasks } = await conn.todo.collectTasks(unionId, { isDone: false });
-const blocks = await conn.docs.getDocBlocks("<docKey>", unionId);
+const me = await conn.contacts.me();                        // 我自己
+const { data } = (await conn.todo.listMyTasks()) as any;    // 我的待办
+const pending = await conn.approval.listPending();          // 待我审批
+const groups = await conn.messages.myGroups();              // 我加入的群
+const msg = await conn.messages.chatMessages({ group: "研发群", limit: 20 }); // 历史消息
+const spaces = await conn.docs.listWikiSpaces();            // 知识库
+const events = await conn.calendar.today();                 // 今日日程
 ```
 
-## 关于"消息读取"的重要说明
+各方法返回 dws 命令解析后的 JSON payload（透传，保留 `ok/outcome/data` 或
+`errorCode/result` 等完整性信号，含分页 `hasMore/nextCursor` 等）。
 
-钉钉开放平台**不提供任意历史消息读取 API**（合规限制，官方无此能力）。本连接器提供的消息读取组合是：
+## 关于「消息读取」
 
-1. **会话元数据**：企业会话列表、群信息、群成员（实时查询官方 API）。
-2. **实时消息捕获**：`dtconn capture` 以 Stream 模式长连接接收机器人所在单聊/群聊的消息，
-   逐条落盘到 JSONL 文件；`im_list_captured_messages` / `conn.messages.listCapturedMessages()`
-   支持按会话、发送人、关键词、时间范围过滤查询。
-
-即：从开启捕获起的消息都可读，历史消息需在钉钉客户端内查看。
+dws 相比直接 OpenAPI 的一大优势是**能读历史消息**：
+- 历史读取：`im_chat_messages`（`chat +chat-messages`）、`im_search_messages`（`chat +search-msg`）
+- 实时监听：`dtconn listen`（`event +listen-im`，Stream 长连接，NDJSON 输出）
 
 ## 验证
 
-```bash
-pnpm test                                      # 42 个单元/集成用例（本地 mock 钉钉服务）
-node scripts/mcp-smoke.mjs                     # 编译产物 MCP stdio 冒烟（initialize → tools/list）
-node --experimental-strip-types scripts/e2e-cli.ts   # 编译产物 CLI 全域端到端（mock 服务）
-```
+- `pnpm test`：20 个用例，用 [tests/fake-dws.mjs](tests/fake-dws.mjs) 模拟 dws 二进制，
+  断言每个模块构造的 dws 命令、`--format json`/`--profile`/`--timeout` 注入、stderr 错误信封映射与 NDJSON 流解析。
+- `pnpm smoke:mcp`：编译产物走 MCP stdio 协议（initialize → tools/list，48 工具）。
+- 真实账号端到端：本机 dws 已登录，`contact_me` / `todo_list_my_tasks`（20 条）/
+  `im_my_groups`（58 个群）/ `wiki_space_list`（7 个知识库）/ `report_templates`（8 个模板）/
+  `attendance_my_today`（1 条打卡）等均实测通过。
 
-- `tests/mock/server.ts` 完整模拟双域名（含鉴权头/参数校验、分页、分片、错误码），
-  因此测试不需要真实凭证，也不会命中线上服务。
-- `scripts/e2e-cli.ts` 逐域调用编译后的 CLI 并断言输出（12 项检查全部通过）。
+## 配置（可选，环境变量）
 
-## 错误排查
-
-| 现象 | 原因与处理 |
+| 变量 | 用途 |
 |---|---|
-| `errcode 60011` / `invalidAuthentication` | accessToken 无效：检查 AppKey/AppSecret |
-| `errcode 60020` / `访问被拒绝` | 权限点未申请或未生效：到开发者后台「权限管理」申请对应读权限 |
-| `ip not in whitelist` | 开发者后台开启了 IP 白名单，将本机出口 IP 加入 |
-| 日历/待办返回空 | 传入的 unionId 与 accessToken 所属企业不匹配 |
-| 审批实例查询报时间非法 | `startTime` 距今不能超过 120 天（OA 高级版 5 年） |
-| capture 连不上 | 应用未开通「机器人-Stream 模式」或未发布 |
+| `DINGTALK_DWS_BIN` | dws 入口；默认解析 npm 全局安装 |
+| `DINGTALK_DWS_PROFILE` | 一次性指定组织/账号（`corpId:userId`） |
+| `DINGTALK_DWS_TIMEOUT` | HTTP 超时秒数，默认 30 |
 
 ## 目录结构
 
 ```
 src/
-  config.ts        凭证/域名/超时等配置（env 加载）
-  token.ts         企业 accessToken 获取与缓存
-  http.ts          双域名 HTTP 封装（鉴权/重试/错误映射）
-  connector.ts     DingTalkConnector 装配入口
-  modules/         八个领域模块（calendar/todo/approval/attendance/report/docs/messages/contacts）
-  capture.ts       Stream 消息捕获 + JSONL 存取
-  tools.ts         33 个只读工具注册表（MCP 与 CLI 共用）+ 参数校验
-  mcp/server.ts    MCP stdio server
-  cli.ts           dtconn CLI
-tests/             mock 钉钉服务器 + client/modules/mcp/capture 测试
-scripts/           mcp-smoke.mjs / e2e-cli.ts 验证脚本
+  config.ts          连接器配置（dws 入口 / profile / timeout，env 加载）
+  connector.ts       DingTalkConnector 装配入口 + run() 逃生舱
+  dws/
+    runner.ts        进程执行器：dws 解析（npm 全局/显式路径）、JSON/NDJSON 解析、flag 注入
+    flags.ts         flag 构造（kebab-case、CSV、布尔）
+    errors.ts        DwsError + stderr 错误信封解析
+  modules/           8 个领域模块（contacts/calendar/todo/approval/attendance/report/docs/messages）
+  tools.ts           48 个只读工具注册表（MCP 与 CLI 共用）+ 参数校验
+  mcp/server.ts      MCP stdio server
+  cli.ts             dtconn CLI（tools/call/raw/listen/status）
+tests/               fake-dws.mjs + runner/modules/mcp 测试
+scripts/mcp-smoke.mjs  MCP 编译产物冒烟
 ```

@@ -1,7 +1,7 @@
 {
   "name": "dingtalk-connector",
-  "version": "0.1.0",
-  "description": "DingTalk read-only connector: messages, calendar, todo, approval, attendance, reports (logs), docs/wiki. Ships a TypeScript SDK, an MCP server and a CLI.",
+  "version": "0.2.0",
+  "description": "DingTalk read-only connector built on dingtalk-workspace-cli (dws): messages, calendar, todo, approval, attendance, reports, docs/wiki. Ships a TypeScript SDK, an MCP server and a CLI.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,17 +14,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "mcp": "node dist/mcp/server.js",
-    "capture": "node dist/cli.js capture",
+    "listen": "node dist/cli.js listen",
     "smoke:mcp": "node scripts/mcp-smoke.mjs",
-    "smoke:e2e": "node --experimental-strip-types scripts/e2e-cli.ts",
-    "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm smoke:mcp && pnpm smoke:e2e"
+    "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm smoke:mcp"
   },
   "engines": {
     "node": ">=18.17"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "dingtalk-stream": "^2.1.5"
+    "@modelcontextprotocol/sdk": "^1.12.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -35,6 +33,7 @@
     "dingtalk",
     "connector",
     "mcp",
+    "dws",
     "calendar",
     "todo",
     "approval",
@@ -42,10 +41,5 @@
     "report",
     "docs"
   ],
-  "license": "MIT",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  }
+  "license": "MIT"
 }

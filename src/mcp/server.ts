@@ -10,16 +10,16 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { DingTalkConnector } from "../connector.js";
 import { loadEnvOptions } from "../config.js";
-import { isDingTalkError } from "../errors.js";
+import { isDwsError } from "../dws/errors.js";
 import { findTool, invokeTool, toolJsonSchema, toolList } from "../tools.js";
 
 /**
- * 构建 DingTalk 只读连接器的 MCP server（stdio transport）。
- * 工具集见 src/tools.ts（与 CLI 共用）。
+ * 基于 dws（dingtalk-workspace-cli）的钉钉只读连接器 MCP server（stdio）。
+ * 认证复用 dws 本地登录态；无环境变量时也可运行（默认 dws 二进制 + 当前 profile）。
  */
 export function buildMcpServer(conn: DingTalkConnector): Server {
   const server = new Server(
-    { name: "dingtalk-connector", version: "0.1.0" },
+    { name: "dingtalk-connector", version: "0.2.0" },
     { capabilities: { tools: {} } },
   );
 
@@ -45,7 +45,7 @@ export function buildMcpServer(conn: DingTalkConnector): Server {
       const result = await invokeTool(conn, tool, args);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (e) {
-      const message = isDingTalkError(e)
+      const message = isDwsError(e)
         ? JSON.stringify(e.toJSON())
         : e instanceof Error
           ? e.message
@@ -61,18 +61,11 @@ export function buildMcpServer(conn: DingTalkConnector): Server {
 }
 
 async function main(): Promise<void> {
-  const options = loadEnvOptions();
-  if (!options) {
-    console.error(
-      "dingtalk-connector MCP server requires DINGTALK_APP_KEY and DINGTALK_APP_SECRET environment variables (see .env.example).",
-    );
-    process.exit(1);
-  }
+  const options = loadEnvOptions() ?? {};
   const conn = new DingTalkConnector(options);
   const server = buildMcpServer(conn);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  // stdio transport keeps the process alive while the client is connected.
 }
 
 const invokedDirectly =
