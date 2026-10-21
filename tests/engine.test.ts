@@ -99,29 +99,29 @@ describe("engine (mock ctx + stub channel)", () => {
 
   it("dispatch: creates a session once, prompts, collects reply, sends back", async () => {
     fresh();
-    const stop = createEngine(ctx, [channel]);
+    const stop = createEngine(ctx, [channel], { replyIdleMs: 20 });
     await tick();
     expect(inbound).toBeDefined();
     inbound!({ conversationId: "g1", conversationType: "group", senderId: "other", text: "在吗", mentionedBot: true });
-    await tick(50);
+    await tick(200);
     expect(created).toBe(1);
     expect(prompts).toEqual(["s-1"]);
     expect(sent).toEqual([{ target: { conversationId: "g1", kind: "group" }, text: "你好" }]);
 
     // 同一聊天第二条消息：复用会话
     inbound!({ conversationId: "g1", conversationType: "group", senderId: "other", text: "再说点", mentionedBot: true });
-    await tick(50);
+    await tick(200);
     expect(created).toBe(1);
     expect(prompts).toEqual(["s-1", "s-1"]);
 
     // 未 @ 的群消息被 Gate 拦截
     inbound!({ conversationId: "g1", conversationType: "group", senderId: "other", text: "路过" });
-    await tick(20);
+    await tick(200);
     expect(prompts).toHaveLength(2);
 
     // 自己发的消息被跳过（防回环）
     inbound!({ conversationId: "g1", conversationType: "group", senderId: "self-1", text: "你好", mentionedBot: true });
-    await tick(20);
+    await tick(200);
     expect(prompts).toHaveLength(2);
 
     stop();
@@ -130,12 +130,12 @@ describe("engine (mock ctx + stub channel)", () => {
 
   it("different chats get different sessions", async () => {
     fresh();
-    const stop = createEngine(ctx, [channel]);
+    const stop = createEngine(ctx, [channel], { replyIdleMs: 20 });
     await tick();
     inbound!({ conversationId: "g1", conversationType: "group", senderId: "a", text: "1", mentionedBot: true });
-    await tick(30);
+    await tick(200);
     inbound!({ conversationId: "g2", conversationType: "group", senderId: "b", text: "2", mentionedBot: true });
-    await tick(30);
+    await tick(200);
     expect(created).toBe(2);
     expect(prompts).toEqual(["s-1", "s-2"]);
     stop();
@@ -152,17 +152,17 @@ describe("engine (mock ctx + stub channel)", () => {
       },
       markNotified: () => {},
     };
-    const stop = createEngine(ctx, [channel], { access });
+    const stop = createEngine(ctx, [channel], { access, replyIdleMs: 20 });
     await tick();
     // 未批准：进待批准 + 一次性提示，不派发
     inbound!({ conversationId: "d1", conversationType: "direct", senderId: "stranger", text: "在吗" });
-    await tick(50);
+    await tick(200);
     expect(pending).toEqual(["stranger"]);
     expect(sent.length).toBe(1);
     expect(prompts).toHaveLength(0);
     // 已批准：正常派发
     inbound!({ conversationId: "d2", conversationType: "direct", senderId: "approved-user", text: "帮我" });
-    await tick(50);
+    await tick(200);
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toBe("s-1");
     stop();
@@ -180,5 +180,20 @@ describe("engine (mock ctx + stub channel)", () => {
     expect(
       gateAllows({ conversationId: "d1", conversationType: "direct", text: "x" }, self, approved),
     ).toBe(false); // 缺少发送者身份拒绝
+  });
+
+  it("gateAllows allowSelf bypasses self-skip (debug self-test)", () => {
+    const selfIds = new Set(["self-1"]);
+    const selfNames = new Set(["马玄"]);
+    const selfMsg = {
+      conversationId: "g1",
+      conversationType: "group" as const,
+      senderId: "self-1",
+      senderName: "马玄",
+      text: "@我",
+      mentionedBot: true,
+    };
+    expect(gateAllows(selfMsg, selfIds, undefined, selfNames)).toBe(false);
+    expect(gateAllows(selfMsg, selfIds, undefined, selfNames, true)).toBe(true);
   });
 });

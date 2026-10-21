@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listChannels } from "../channels/registry.js";
 import type { ImChannel, ImInboundMessage, ImSendTarget } from "../channels/types.js";
@@ -88,6 +88,10 @@ function dataFile(ctx: EngineContext): string {
 export interface EngineOptions {
   /** 平台级接收开关。 */
   isEnabled?: (providerId: string) => boolean;
+  /** 调试：是否允许处理「自己」发的消息（自测用，生产默认返回 false）。 */
+  allowSelf?: () => boolean;
+  /** 回复收集的静默判定时长（毫秒），默认 2500；测试可调小。 */
+  replyIdleMs?: number;
   /** 私聊准入：白名单判定 + 待批准登记。 */
   access?: {
     isApproved(providerId: string, senderId: string): boolean;
@@ -156,6 +160,15 @@ export function createEngine(
 
   const dispatch = async (channel: ImChannel, message: ImInboundMessage): Promise<void> => {
     if (disposed || !isCurrentGeneration()) return;
+    // 诊断日志：精确定位派发链路卡点（写文件，Host 内可观察）。
+    const diag = (line: string): void => {
+      try {
+        appendFileSync(join(dataDirOf(ctx), "dispatch.log"), `${new Date().toISOString()} ${line}\n`);
+      } catch {
+        /* ignore */
+      }
+    };
+    diag(`recv provider=${channel.providerId} conv=${message.conversationId} type=${message.conversationType} sender=${message.senderName ?? message.senderId ?? "?"} at=${String(message.mentionedBot)} text=${message.text.slice(0, 40)}`);
     try {
       if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
       const target: ImSendTarget =
@@ -170,7 +183,7 @@ export function createEngine(
       const isApproved = opts.access
         ? (senderId: string) => opts.access!.isApproved(channel.providerId, senderId)
         : undefined;
-      if (!gateAllows(message, selfIds, isApproved, selfNames)) {
+      if (!gateAllows(message, selfIds, isApproved, selfNames, opts.allowSelf?.() ?? false)) {
         // 未批准的私聊：登记待批准，首次发一次性提示。
         if (
           opts.access &&
@@ -202,9 +215,11 @@ export function createEngine(
         store.put(key, sessionId);
         log.info(`[im-connect] new session ${sessionId} for ${key}`);
       }
+      diag(`session=${sessionId}`);
       const requestId = `im-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       // prompt 前先 resolve/resume 会话的 Agent
       await ctx.sessionController.resolveAgent(sessionId);
+      diag("resolveAgent ok");
       await ctx.sessionController.prompt(
         {
           requestId,
@@ -214,12 +229,23 @@ export function createEngine(
         },
         new AbortController().signal,
       );
-      const reply = await collectReply(ctx, sessionId);
+      diag("prompt accepted, collecting reply");
+      const reply = await collectReply(
+        ctx,
+        sessionId,
+        (e) => diag(`collect error: ${(e as Error)?.message ?? String(e)}`),
+        { idleMs: opts.replyIdleMs },
+      );
+      diag(`collected ${reply.length} chars: ${reply.slice(0, 80)}`);
       if (reply.trim()) {
         await channel.sendText(target, reply.trim());
+        diag(`sendText ok (group=${target.kind === "group" ? target.conversationId : target.openDingTalkId})`);
         log.info(`[im-connect] replied to ${channel.providerId}:${message.conversationId}`);
+      } else {
+        diag("empty reply, skip send");
       }
     } catch (e) {
+      diag(`ERROR ${(e as Error)?.message ?? String(e)}`);
       log.error(`[im-connect] dispatch failed: ${(e as Error)?.message ?? String(e)}`);
     }
   };
@@ -312,10 +338,13 @@ export function gateAllows(
   selfIds: ReadonlySet<string>,
   isApproved?: (senderId: string) => boolean,
   selfNames?: ReadonlySet<string>,
+  allowSelf = false,
 ): boolean {
-  if (message.senderId && selfIds.has(message.senderId)) return false;
-  // 钉钉事件只带 sender 名称（无 staffId），用名字兜底跳过自己
-  if (selfNames && message.senderName && selfNames.has(message.senderName)) return false;
+  if (!allowSelf) {
+    if (message.senderId && selfIds.has(message.senderId)) return false;
+    // 钉钉事件只带 sender 名称（无 staffId），用名字兜底跳过自己
+    if (selfNames && message.senderName && selfNames.has(message.senderName)) return false;
+  }
   if (message.conversationType === "group") return message.mentionedBot === true;
   if (!message.senderId) return false;
   return isApproved ? isApproved(message.senderId) : true;
@@ -353,30 +382,64 @@ export async function runSelfTest(ctx: EngineContext): Promise<{
   }
 }
 
-/** 跟随会话流收集本轮回复文本（text-delta 拼接，end 即止）。 */
-async function collectReply(ctx: EngineContext, sessionId: string): Promise<string> {
+/** 跟随会话流收集本轮回复文本。
+ * 兼容 LLM 重试（可能先出现一次 end 再重新 start）：收到 end 后若静默 idleMs
+ * 才视为本轮结束；总时长上限 maxMs。 */
+async function collectReply(
+  ctx: EngineContext,
+  sessionId: string,
+  onError?: (e: unknown) => void,
+  opts: { idleMs?: number; maxMs?: number } = {},
+): Promise<string> {
+  const idleMs = opts.idleMs ?? 2_500;
+  const maxMs = opts.maxMs ?? 180_000;
   const ac = new AbortController();
   const parts: string[] = [];
-  try {
-    const frames = ctx.sessionController.follow(
-      { address: { kind: "session", sessionId }, assistantStream: true },
-      ac.signal,
-    );
-    for await (const frame of frames) {
-      if (frame.type !== "assistant-stream") continue;
-      const f = frame.frame;
-      if (f.type === "chunk") {
-        const c = f.chunk as { type?: string; text?: string } | null;
+  const queue: Array<{ type: "start" } | { type: "chunk"; chunk: unknown } | { type: "end" }> = [];
+  let finished = false;
+  let sawEnd = false;
+  let lastActivity = Date.now();
+  const startedAt = Date.now();
+
+  // 后台消费：把 follow 流里的 assistant-stream 帧推进队列
+  void (async () => {
+    try {
+      const frames = ctx.sessionController.follow(
+        { address: { kind: "session", sessionId }, assistantStream: true },
+        ac.signal,
+      );
+      for await (const frame of frames) {
+        if (frame.type !== "assistant-stream") continue;
+        queue.push(frame.frame);
+      }
+    } catch (e) {
+      onError?.(e);
+    } finally {
+      finished = true;
+    }
+  })();
+
+  while (Date.now() - startedAt < maxMs) {
+    const frame = queue.shift();
+    if (frame) {
+      lastActivity = Date.now();
+      if (frame.type === "chunk") {
+        const c = frame.chunk as { type?: string; text?: string } | null;
         if (c && typeof c === "object" && c.type === "text-delta" && typeof c.text === "string") {
           parts.push(c.text);
         }
-      } else if (f.type === "end") {
-        ac.abort();
-        break;
+      } else if (frame.type === "end") {
+        sawEnd = true;
+      } else if (frame.type === "start") {
+        sawEnd = false; // 新一轮尝试开始，重置结束判定
       }
+      continue;
     }
-  } catch {
-    /* stream closed / aborted */
+    if (finished) break;
+    // 已看到 end 且静默超过 idleMs → 本轮结束
+    if (sawEnd && Date.now() - lastActivity > idleMs) break;
+    await new Promise((r) => setTimeout(r, Math.min(100, Math.max(10, Math.floor(idleMs / 2)))));
   }
+  ac.abort();
   return parts.join("");
 }

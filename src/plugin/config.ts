@@ -19,6 +19,8 @@ export type ImConnectConfigData = {
   providers: Record<string, ProviderConfig>;
   /** 已批准的私聊发送者（provider → senderId[]），落盘。 */
   whitelist: Record<string, string[]>;
+  /** 调试：允许处理「自己」发的消息（仅用于自测，生产默认关闭）。 */
+  debug?: { allowSelf?: boolean };
 };
 
 const DEFAULTS: ImConnectConfigData = {
@@ -27,6 +29,7 @@ const DEFAULTS: ImConnectConfigData = {
     wecom: { receive: false },
   },
   whitelist: {},
+  debug: { allowSelf: false },
 };
 
 const PENDING_LIMIT = 50;
@@ -122,17 +125,24 @@ export class JsonConfigStore {
     return [...(this.load().whitelist[providerId] ?? [])];
   }
 
+  /** 调试开关：是否允许处理自己发送的消息（自测用）。 */
+  getAllowSelf(): boolean {
+    return Boolean(this.load().debug?.allowSelf);
+  }
+
   private load(): ImConnectConfigData {
     try {
       const loaded = JSON.parse(readFileSync(this.file, "utf8")) as Partial<ImConnectConfigData>;
       return {
         providers: { ...DEFAULTS.providers, ...(loaded.providers ?? {}) },
         whitelist: loaded.whitelist ?? {},
+        debug: { ...DEFAULTS.debug, ...(loaded.debug ?? {}) },
       };
     } catch {
       return {
         providers: { ...DEFAULTS.providers },
         whitelist: {},
+        debug: { ...DEFAULTS.debug },
       };
     }
   }
