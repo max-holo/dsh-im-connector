@@ -9,58 +9,63 @@ import {
   type ListToolsResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { loadEnvOptions, resolveOptions } from "../config.js";
-import { DwsRunner } from "../dws/runner.js";
-import { isDwsError } from "../dws/errors.js";
+import { getProvider, listProviders } from "../providers/registry.js";
+import { CliRunner } from "../cli/runner.js";
+import { isCliError } from "../cli/errors.js";
 
-const RUN_TOOL: Tool = {
-  name: "run",
-  description:
-    "直接执行任意 dws（dingtalk-workspace-cli）命令并返回其 JSON 输出（自动追加 --format json）。dws 是钉钉的统一操作入口，读写全覆盖。args 是一串字符串（dws 命令 + 参数，不要含 --format）。\n\n" +
-    "常用读操作：\n" +
-    "  通讯录: [\"contact\",\"+me\"] / [\"contact\",\"+search-user\",\"--query\",\"张三\"] / [\"contact\",\"+dept-members\",\"--dept\",\"研发中心\"]\n" +
-    "  日历:   [\"calendar\",\"+today\"] / [\"calendar\",\"+agenda\",\"--start\",\"2026-10-13T00:00:00+08:00\",\"--end\",\"2026-10-14T00:00:00+08:00\"]\n" +
-    "  待办:   [\"todo\",\"+get-my-tasks\"] / [\"todo\",\"+get\",\"--task-id\",\"<id>\"]\n" +
-    "  审批:   [\"oa\",\"approval\",\"list-pending\"] / [\"oa\",\"approval\",\"detail\",\"--instance-id\",\"<id>\"]\n" +
-    "  考勤:   [\"attendance\",\"+check-result\",\"--users\",\"u1,u2\",\"--start\",\"2026-10-01\",\"--end\",\"2026-10-10\"] / [\"attendance\",\"+my-attendance\"]\n" +
-    "  日志:   [\"report\",\"inbox\",\"list\"] / [\"report\",\"entry\",\"get\",\"--report-id\",\"<id>\"] / [\"report\",\"template\",\"list\"]\n" +
-    "  文档:   [\"doc\",\"read\",\"--node\",\"<docId|url>\"] / [\"wiki\",\"+space-list\"] / [\"drive\",\"+list\"]\n" +
-    "  消息:   [\"chat\",\"+chat-messages\",\"--group\",\"<群名|openConversationId>\",\"--limit\",\"20\"] / [\"chat\",\"+search-msg\",\"--query\",\"<kw>\"] / [\"chat\",\"+my-groups\"]\n\n" +
-    "写操作（需用户明确意图，必要时加 --yes）：\n" +
-    "  发消息: [\"chat\",\"+messages-send\",\"--group\",\"<openConversationId>\",\"--markdown\",\"<内容>\",\"--title\",\"<标题>\",\"--yes\"]\n" +
-    "  提交日志: [\"report\",\"entry\",\"submit\",\"--template-id\",\"<id>\",\"--contents-file\",\"./report.json\",\"--to-user-ids\",\"<userId>\",\"--yes\"]\n" +
-    "  实时监听: [\"event\",\"+listen-im\",\"--kind\",\"at-me\"]（长连接，谨慎使用）\n",
-  inputSchema: {
-    type: "object",
-    properties: {
-      args: {
-        type: "array",
-        items: { type: "string" },
-        description:
-          "dws 命令及参数的字符串数组，例如 [\"contact\",\"+me\"]。不要包含 --format（会自动追加）。",
+function buildRunTool(): Tool {
+  const providers = listProviders();
+  const lines = providers
+    .map((p) => {
+      const ex = p.examples.map((e) => `    ${e}`).join("\n");
+      return `- ${p.id}（${p.displayName}，\`${p.bin}\`）:\n${ex}`;
+    })
+    .join("\n");
+  return {
+    name: "run",
+    description:
+      `统一 IM 透传：执行指定平台的 CLI 命令并返回其 JSON 输出。已接入平台：\n${lines}\n\n` +
+      `provider 选平台，args 是该平台 CLI 的命令字符串数组。写操作（发消息/提交/审批等）需用户明确意图，必要时加 --yes（钉钉）或先用 --dry-run 预览。`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: {
+          type: "string",
+          enum: providers.map((p) => p.id),
+          description: `IM 平台标识：${providers.map((p) => `${p.id}=${p.displayName}`).join("，")}`,
+        },
+        args: {
+          type: "array",
+          items: { type: "string" },
+          description: "对应平台 CLI 的命令及参数（字符串数组）。",
+        },
       },
+      required: ["provider", "args"],
     },
-    required: ["args"],
-  },
-};
-
-export interface McpServerOptions {
-  profile?: string;
-  env?: NodeJS.ProcessEnv;
+  };
 }
 
 /**
- * 构建 dws 透传 MCP server：只暴露一个 `run` 工具，参数即 dws 原生命令，
- * 转发给 DwsRunner 执行并返回解析后的 JSON。
+ * 构建统一 IM 透传 MCP server：暴露一个 `run { provider, args }` 工具，
+ * 按 provider 注册表路由到底层 CLI。新增平台只需在 registry 追加 spec。
  */
-export function buildMcpServer(runner: DwsRunner, options: McpServerOptions = {}): Server {
+export interface McpServerOptions {
+  name?: string;
+  version?: string;
+  /** 测试/覆盖用：provider id → CLI 入口路径。 */
+  binOverrides?: Record<string, string>;
+}
+
+export function buildMcpServer(options: McpServerOptions = {}): Server {
   const server = new Server(
-    { name: "dingtalk-connector", version: "0.3.0" },
+    { name: options.name ?? "im", version: options.version ?? "0.1.0" },
     { capabilities: { tools: {} } },
   );
 
+  const runTool = buildRunTool();
+
   server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => ({
-    tools: [RUN_TOOL],
+    tools: [runTool],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
@@ -70,32 +75,44 @@ export function buildMcpServer(runner: DwsRunner, options: McpServerOptions = {}
         isError: true,
       };
     }
-    const args = request.params.arguments?.args;
+    const { provider, args } = request.params.arguments ?? {};
+    const spec = getProvider(provider as string);
+    if (!spec) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `未知平台 "${provider}"。可用：${listProviders().map((p) => p.id).join("，")}`,
+          },
+        ],
+        isError: true,
+      };
+    }
     if (!Array.isArray(args) || args.length === 0 || !args.every((a) => typeof a === "string")) {
       return {
         content: [
           {
             type: "text",
-            text: '参数 args 必须是非空字符串数组，例如 {"args":["contact","+me"]}',
+            text: '参数 args 必须是非空字符串数组，例如 {"provider":"dingtalk","args":["contact","+me"]}',
           },
         ],
         isError: true,
       };
     }
     try {
+      const runner = new CliRunner(spec);
       const result = await runner.runJson(args as string[], {
-        profile: options.profile,
-        env: options.env,
+        bin: options.binOverrides?.[spec.id],
       });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (e) {
-      const message = isDwsError(e)
+      const message = isCliError(e)
         ? JSON.stringify(e.toJSON())
         : e instanceof Error
           ? e.message
           : String(e);
       return {
-        content: [{ type: "text", text: `dws run failed: ${message}` }],
+        content: [{ type: "text", text: `${spec.displayName} run failed: ${message}` }],
         isError: true,
       };
     }
@@ -105,9 +122,7 @@ export function buildMcpServer(runner: DwsRunner, options: McpServerOptions = {}
 }
 
 async function main(): Promise<void> {
-  const options = resolveOptions(loadEnvOptions() ?? {});
-  const runner = new DwsRunner({ bin: options.dwsBin, timeoutSec: options.timeoutSec });
-  const server = buildMcpServer(runner, { profile: options.profile, env: options.env });
+  const server = buildMcpServer();
   await server.connect(new StdioServerTransport());
 }
 

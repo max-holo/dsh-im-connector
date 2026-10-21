@@ -1,5 +1,5 @@
-/** dws 错误信封（写到 stderr 的稳定外层结构）。 */
-export interface DwsErrorEnvelope {
+/** CLI 错误信封（dws 风格；其它 CLI 若无结构化信封则回退到原始 stderr）。 */
+export interface CliErrorEnvelope {
   error?: {
     code?: number | string;
     category?: string;
@@ -7,7 +7,6 @@ export interface DwsErrorEnvelope {
     reason?: string;
     retryable?: boolean;
     retry_after_seconds?: number;
-    next_retry_at?: string;
     hint?: string;
     actions?: string[];
     details?: unknown;
@@ -16,8 +15,8 @@ export interface DwsErrorEnvelope {
   };
 }
 
-/** 由 dws 命令失败引发的统一错误。 */
-export class DwsError extends Error {
+/** 由底层 CLI 命令失败引发的统一错误。 */
+export class CliError extends Error {
   readonly code?: number | string;
   readonly category?: string;
   readonly reason?: string;
@@ -41,7 +40,7 @@ export class DwsError extends Error {
     actions?: string[];
   }) {
     super(init.message);
-    this.name = "DwsError";
+    this.name = "CliError";
     this.code = init.code;
     this.category = init.category;
     this.reason = init.reason;
@@ -69,40 +68,33 @@ export class DwsError extends Error {
   }
 }
 
-export function isDwsError(e: unknown): e is DwsError {
-  return e instanceof DwsError;
+export function isCliError(e: unknown): e is CliError {
+  return e instanceof CliError;
 }
 
-/**
- * 从 stderr 文本中提取 dws 错误信封。dws 在 JSON 模式下把错误写进 stderr，
- * 结构为 `{"error":{...}}`；也可能夹带进程噪声，因此做一次容错定位。
- */
-export function parseErrorEnvelope(stderr: string): DwsErrorEnvelope | undefined {
+/** 从 stderr 文本提取结构化错误信封；失败返回 undefined（调用方回退原始文本）。 */
+export function parseErrorEnvelope(stderr: string): CliErrorEnvelope | undefined {
   const text = stderr.trim();
   if (!text) return undefined;
-  // 1) 整段就是 JSON
   const direct = tryParse(text);
-  if (direct && direct.error) return direct;
-  // 2) 定位第一个 '{' 到最后一个 '}' 的子串
+  if (direct?.error) return direct;
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start >= 0 && end > start) {
-    const slice = text.slice(start, end + 1);
-    const parsed = tryParse(slice);
-    if (parsed && parsed.error) return parsed;
+    const parsed = tryParse(text.slice(start, end + 1));
+    if (parsed?.error) return parsed;
   }
-  // 3) 逐行扫描
   for (const line of text.split(/\r?\n/)) {
     const parsed = tryParse(line.trim());
-    if (parsed && parsed.error) return parsed;
+    if (parsed?.error) return parsed;
   }
   return undefined;
 }
 
-function tryParse(text: string): DwsErrorEnvelope | undefined {
+function tryParse(text: string): CliErrorEnvelope | undefined {
   if (!text) return undefined;
   try {
-    return JSON.parse(text) as DwsErrorEnvelope;
+    return JSON.parse(text) as CliErrorEnvelope;
   } catch {
     return undefined;
   }

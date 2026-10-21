@@ -1,14 +1,7 @@
-export {
-  loadEnvOptions,
-  resolveOptions,
-  type ConnectorOptions,
-  type ResolvedConnectorOptions,
-} from "./config.js";
-export { DwsError, isDwsError, parseErrorEnvelope, type DwsErrorEnvelope } from "./dws/errors.js";
-export {
-  DwsRunner,
-  type DwsExecution,
-  type DwsFormat,
-  type DwsRunOptions,
-} from "./dws/runner.js";
+export { CliError, isCliError, parseErrorEnvelope, type CliErrorEnvelope } from "./cli/errors.js";
+export { CliRunner, type CliExecution, type CliRunOptions } from "./cli/runner.js";
+export type { ImProviderSpec } from "./providers/types.js";
+export { dingtalk } from "./providers/dingtalk.js";
+export { wecom } from "./providers/wecom.js";
+export { getProvider, listProviders } from "./providers/registry.js";
 export { buildMcpServer, type McpServerOptions } from "./mcp/server.js";

@@ -1,10 +1,18 @@
 {
-  "name": "dingtalk-connector",
-  "version": "0.3.0",
-  "description": "Unified DingTalk access via a single MCP passthrough tool that forwards dws (dingtalk-workspace-cli) commands.",
+  "name": "im-connector",
+  "version": "0.4.0",
+  "description": "Extensible IM connector: a single MCP passthrough that routes to DingTalk (dws) and WeCom (wecom-cli), with a provider registry ready for Feishu/Discord and more.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "im-connector": "./dist/mcp/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -15,7 +23,7 @@
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm smoke:mcp"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=18"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0"
@@ -26,9 +34,12 @@
     "vitest": "^3.0.0"
   },
   "keywords": [
-    "dingtalk",
-    "dws",
+    "im",
     "mcp",
+    "dingtalk",
+    "wecom",
+    "feishu",
+    "discord",
     "connector"
   ],
   "license": "MIT"

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "DingTalk Connector",
-    "description": "Read-only DingTalk access (messages, calendar, todo, approval, attendance, reports, docs) via dws."
+    "title": "IM Connector",
+    "description": "Unified IM passthrough for DingTalk (dws) and WeCom (wecom-cli); extensible to Feishu, Discord and more."
   }
 }
