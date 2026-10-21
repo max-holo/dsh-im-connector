@@ -95,7 +95,7 @@ interface ImChannel {
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| P1 | 架构文档 + 渠道抽象 + dingtalk/wecom 收发通道 + CliRunner NDJSON 流 + 单测 | 本轮 |
-| P2 | Host engine（ChannelManager / Router / Dispatcher / Gate）+ 插件 bundle 安装 | 待做 |
+| P1 | 架构文档 + 渠道抽象 + dingtalk/wecom 收发通道 + CliRunner NDJSON 流 + 单测 | ✅ 完成 |
+| P2 | Host engine（ChannelManager / Router / Dispatcher / Gate）+ 插件 bundle 安装 | ✅ 已落地：插件 @local/im-connect 已安装激活，dws 监听进程已在 Host 内运行；待真人 @ 机器人做首次对话实测 |
 | P3 | Client 设置页（添加连接器、扫码、启停、状态、待批准列表） | 待做 |
 | P4 | 增强：卡片/按钮回复、文件图片、工具审批回 IM、多账号 | 待做 |

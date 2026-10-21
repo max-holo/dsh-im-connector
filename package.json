@@ -5,6 +5,10 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./plugin": "./dist/plugin/index.js"
+  },
   "bin": {
     "im-connector": "./dist/mcp/server.js"
   },
@@ -15,6 +19,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:bundle": "pnpm build && esbuild src/plugin/index.ts --bundle --format=esm --platform=node --outfile=im-connect/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -30,6 +35,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
