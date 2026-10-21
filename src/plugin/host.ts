@@ -51,6 +51,11 @@ export class ImConnectHost {
   readonly config: JsonConfigStore;
   private login: LoginState = { state: "idle", output: "", startedAt: 0 };
   private loginChild?: ReturnType<typeof spawn>;
+  /** 连接状态缓存（provider → 上次探测结果），避免每次 /state 都 spawn CLI。 */
+  private readonly statusCache = new Map<
+    string,
+    { at: number; value: { connected: boolean; account?: string } }
+  >();
 
   constructor(config: JsonConfigStore) {
     this.config = config;
@@ -121,26 +126,35 @@ export class ImConnectHost {
     const providers = [];
     const pending = [];
     for (const channel of listChannels()) {
-      let connected = false;
+      // 连接状态缓存 15s：每次 /state 都 spawn CLI 会拖慢页面（开关响应慢的主因之一）
+      const cached = this.statusCache.get(channel.providerId);
+      let connected: boolean;
       let account: string | undefined;
-      try {
-        const status = (await channel.status()) as
-          | string
-          | {
-              authenticated?: boolean;
-              token_valid?: boolean;
-              user_name?: string;
-              corp_name?: string;
-            };
-        if (typeof status === "string") {
-          connected = status.trim() === "authorized";
-          account = connected ? "已授权" : undefined;
-        } else if (status && typeof status === "object") {
-          connected = Boolean(status.authenticated ?? status.token_valid);
-          if (status.user_name) account = status.corp_name ? `${status.user_name} @ ${status.corp_name}` : status.user_name;
+      if (cached && Date.now() - cached.at < 15_000) {
+        ({ connected, account } = cached.value);
+      } else {
+        try {
+          const status = (await channel.status()) as
+            | string
+            | {
+                authenticated?: boolean;
+                token_valid?: boolean;
+                user_name?: string;
+                corp_name?: string;
+              };
+          if (typeof status === "string") {
+            connected = status.trim() === "authorized";
+            account = connected ? "已授权" : undefined;
+          } else if (status && typeof status === "object") {
+            connected = Boolean(status.authenticated ?? status.token_valid);
+            if (status.user_name) account = status.corp_name ? `${status.user_name} @ ${status.corp_name}` : status.user_name;
+          } else {
+            connected = false;
+          }
+        } catch {
+          connected = false;
         }
-      } catch {
-        connected = false;
+        this.statusCache.set(channel.providerId, { at: Date.now(), value: { connected, account } });
       }
       providers.push({
         id: channel.providerId,

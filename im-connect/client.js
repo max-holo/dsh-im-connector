@@ -5,89 +5,159 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
     const { useState, useEffect, useCallback } = React;
 
-    const style = {
-      card: { display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 0', color: 'var(--dsw-alias-text-primary, #1f2329)', fontSize: '14px' },
-      row: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', border: '1px solid var(--dsw-alias-border, #e5e6eb)', borderRadius: '8px', flexWrap: 'wrap' },
-      name: { fontWeight: 600, minWidth: '72px' },
-      badge: (ok) => ({ fontSize: '12px', padding: '2px 8px', borderRadius: '999px', background: ok ? 'rgba(56,158,13,.12)' : 'rgba(207,19,34,.1)', color: ok ? '#389e0d' : '#cf1322' }),
-      button: { padding: '6px 14px', borderRadius: '6px', border: '1px solid var(--dsw-alias-border, #e5e6eb)', background: 'var(--dsw-alias-bg-container, #fff)', cursor: 'pointer', fontSize: '13px' },
-      toggleOn: (on) => ({ padding: '6px 14px', borderRadius: '6px', border: '1px solid transparent', cursor: 'pointer', fontSize: '13px', color: '#fff', background: on ? '#1677ff' : '#bfbfbf' }),
-      panel: { width: '100%', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', padding: '12px', background: 'var(--dsw-alias-bg-container, #fff)', borderRadius: '8px', border: '1px solid var(--dsw-alias-border, #e5e6eb)' },
-      qrImg: { display: 'block', width: 220, height: 220 },
-      qrHint: { fontSize: '12px', color: 'var(--dsw-alias-text-secondary, #86909c)', margin: '0', wordBreak: 'break-all' },
-      hint: { color: 'var(--dsw-alias-text-secondary, #86909c)', fontSize: '13px', margin: '0' },
-      err: { color: '#cf1322', fontSize: '13px', margin: '0' },
-      ok: { color: '#389e0d', fontSize: '13px', margin: '0' },
-      pre: { width: '100%', margin: '6px 0 0', padding: '10px', background: '#0b0e14', color: '#e8f4ff', borderRadius: '8px', fontSize: '12px', lineHeight: 1.35, overflow: 'auto', maxHeight: '180px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' },
-      title: { fontSize: '16px', fontWeight: 700, margin: '0' },
-      note: { fontSize: '12px', color: 'var(--dsw-alias-text-secondary, #86909c)', margin: '4px 0 0', lineHeight: 1.5 },
-      pendingRow: { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', border: '1px solid var(--dsw-alias-border, #e5e6eb)', borderRadius: '8px', flexWrap: 'wrap' },
-      pendingText: { flex: '1 1 220px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-      approve: { padding: '4px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#fff', background: '#389e0d' },
-      reject: { padding: '4px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#fff', background: '#cf1322' },
+    // 主题令牌（带兜底色）
+    const C = {
+      text: 'var(--dsw-alias-text-primary, #1f2329)',
+      sub: 'var(--dsw-alias-text-secondary, #86909c)',
+      border: 'var(--dsw-alias-border, #e5e6eb)',
+      card: 'var(--dsw-alias-bg-container, #ffffff)',
+      primary: '#1677ff',
+      ok: '#389e0d',
+      okBg: 'rgba(56,158,13,.10)',
+      err: '#cf1322',
+      errBg: 'rgba(207,19,34,.08)',
     };
+
+    const s = {
+      wrap: { display: 'flex', flexDirection: 'column', gap: 14, padding: '20px 0 8px', color: C.text, fontSize: 14, maxWidth: 720 },
+      head: { display: 'flex', flexDirection: 'column', gap: 6 },
+      title: { fontSize: 17, fontWeight: 700, margin: 0, letterSpacing: 0.2 },
+      desc: { fontSize: 13, lineHeight: 1.6, color: C.sub, margin: 0 },
+      card: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 },
+      row: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' },
+      rowMain: { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: '1 1 260px' },
+      rowSide: { display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 },
+      dot: (ok) => ({ width: 8, height: 8, borderRadius: '50%', background: ok ? C.ok : C.err, boxShadow: `0 0 0 3px ${ok ? C.okBg : C.errBg}` }),
+      name: { fontWeight: 600, fontSize: 14 },
+      badge: (ok) => ({ fontSize: 12, padding: '2px 8px', borderRadius: 999, background: ok ? C.okBg : C.errBg, color: ok ? C.ok : C.err, whiteSpace: 'nowrap' }),
+      account: { fontSize: 12, color: C.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 },
+      // 开关（纯展示用 switch，点击整块可切换）
+      switch: (on, busy) => ({
+        position: 'relative', width: 44, height: 24, borderRadius: 999, cursor: busy ? 'wait' : 'pointer',
+        background: on ? C.primary : '#c9cdd4', transition: 'background .18s ease', border: 'none', padding: 0, flexShrink: 0,
+        opacity: busy ? 0.65 : 1,
+      }),
+      knob: (on) => ({
+        position: 'absolute', top: 3, left: on ? 23 : 3, width: 18, height: 18, borderRadius: '50%',
+        background: '#fff', transition: 'left .18s ease', boxShadow: '0 1px 2px rgba(0,0,0,.18)',
+      }),
+      btn: { padding: '6px 14px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 13, lineHeight: '18px', whiteSpace: 'nowrap' },
+      btnPrimary: { padding: '6px 14px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '18px', whiteSpace: 'nowrap' },
+      panel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, paddingTop: 12, borderTop: `1px dashed ${C.border}`, marginTop: 2 },
+      qr: { width: 220, height: 220, display: 'block', borderRadius: 10, background: '#fff' },
+      hint: { fontSize: 12, color: C.sub, margin: 0, wordBreak: 'break-all', textAlign: 'center', lineHeight: 1.5 },
+      err: { fontSize: 13, color: C.err, margin: 0 },
+      okText: { fontSize: 13, color: C.ok, margin: 0 },
+      empty: { fontSize: 13, color: C.sub, margin: 0, padding: '2px 0' },
+      divider: { height: 1, background: C.border, opacity: 0.7, margin: '2px 0' },
+      sectionTitle: { fontSize: 13, fontWeight: 600, color: C.sub, margin: 0, letterSpacing: 0.3 },
+    };
+
+    function Switch({ on, busy, onToggle, label }) {
+      return h('button', {
+        type: 'button',
+        role: 'switch',
+        'aria-checked': on,
+        'aria-label': label,
+        style: s.switch(on, busy),
+        onClick: () => onToggle(!on),
+        title: on ? '点击关闭接收' : '点击开启接收',
+      }, h('span', { style: s.knob(on) }));
+    }
 
     function LoginPanel({ login, onClose, onRetry }) {
       if (!login) return null;
       if (login.state === 'waiting') {
-        return h('div', { style: style.panel },
-          login.url ? h('img', { style: style.qrImg, src: '/im-connect/api/qr.png?t=' + encodeURIComponent(login.startedAt || Date.now()), alt: '登录二维码' }) : null,
-          h('p', { style: style.hint }, '用手机扫码完成授权（等待中…）'),
-          login.url ? h('p', { style: style.qrHint }, '或打开链接：' + login.url) : null,
-          h('button', { style: style.button, onClick: onClose }, '取消'),
+        return h('div', { style: s.panel },
+          login.url ? h('img', { style: s.qr, src: '/im-connect/api/qr.png?t=' + encodeURIComponent(login.startedAt || Date.now()), alt: '登录二维码' }) : h('p', { style: s.hint }, '正在生成二维码…'),
+          h('p', { style: s.hint }, '用手机扫码完成授权'),
+          login.url ? h('p', { style: s.hint }, '或打开链接：' + login.url) : null,
+          h('button', { style: s.btn, onClick: onClose }, '取消'),
         );
       }
       if (login.state === 'authorized') {
-        return h('div', { style: style.panel },
-          h('p', { style: style.ok }, '✅ 授权完成，已连接'),
-          h('button', { style: style.button, onClick: onClose }, '关闭'),
+        return h('div', { style: s.panel },
+          h('p', { style: s.okText }, '✅ 授权完成，已连接'),
+          h('button', { style: s.btn, onClick: onClose }, '关闭'),
         );
       }
-      return h('div', { style: style.panel },
-        h('p', { style: style.err }, login.error || (login.state === 'timeout' ? '登录超时' : '登录失败')),
-        h('pre', { style: style.pre }, login.output || '（无输出）'),
-        h('div', { style: { display: 'flex', gap: 8 } },
-          h('button', { style: style.button, onClick: onRetry }, '重新登录'),
-          h('button', { style: style.button, onClick: onClose }, '关闭'),
-        ),
+      return h('div', { style: s.panel },
+        h('p', { style: s.err }, login.error || '登录失败'),
+        h('button', { style: s.btn, onClick: onRetry }, '重新登录'),
+        h('button', { style: s.btn, onClick: onClose }, '关闭'),
       );
     }
 
-    function ProviderRow({ p, login }) {
+    function ProviderCard({ p, login, onMountLogin, onCloseLogin }) {
       const [busy, setBusy] = useState(false);
-      const onToggle = () => {
-        fetch('/im-connect/api/receive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: p.id, enabled: !p.receive }) }).catch(() => {});
+      const [local, setLocal] = useState(p.receive);
+      useEffect(() => { setLocal(p.receive); }, [p.receive]);
+
+      const toggle = async (next) => {
+        setLocal(next); // 立即反馈
+        setBusy(true);
+        try {
+          await fetch('/im-connect/api/receive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: p.id, enabled: next }),
+          });
+          onMountLogin.refresh(); // 立即拉权威状态
+        } finally {
+          setBusy(false);
+        }
       };
-      const onLogin = () => {
-        fetch('/im-connect/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: p.id }) }).catch(() => {});
-        p._startLogin();
+      const startLogin = () => {
+        fetch('/im-connect/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: p.id }),
+        }).catch(() => {});
+        onMountLogin.startLogin(p.id);
       };
-      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-        h('div', { style: style.row },
-          h('span', { style: style.name }, p.displayName),
-          h('span', { style: style.badge(p.connected) }, p.connected ? '已连接' : '未连接'),
-          p.account ? h('span', { style: style.hint }, p.account) : null,
-          h('button', { style: style.toggleOn(p.receive), onClick: () => { setBusy(true); onToggle(); setTimeout(() => setBusy(false), 400); }, disabled: busy, role: 'switch', 'aria-checked': p.receive }, p.receive ? '接收开' : '接收关'),
-          h('button', { style: style.button, onClick: onLogin }, '扫码登录'),
+
+      return h('div', null,
+        h('div', { style: s.row },
+          h('div', { style: s.rowMain },
+            h('span', { style: s.dot(p.connected) }),
+            h('span', { style: s.name }, p.displayName),
+            h('span', { style: s.badge(p.connected) }, p.connected ? '已连接' : '未连接'),
+            p.account ? h('span', { style: s.account, title: p.account }, p.account) : null,
+          ),
+          h('div', { style: s.rowSide },
+            h('span', { style: { fontSize: 12, color: C.sub } }, '接收'),
+            h(Switch, { on: local, busy, onToggle: toggle, label: `${p.displayName} 接收开关` }),
+            h('button', { style: s.btn, onClick: startLogin }, '扫码登录'),
+          ),
         ),
-        p.receiveHealth && !p.receiveHealth.ok ? h('p', { style: style.err }, `⚠️ 接收不可用：${p.receiveHealth.reason || '未知原因'}`) : null,
-        h(LoginPanel, { login, onClose: p._closeLogin, onRetry: onLogin }),
+        p.receiveHealth && !p.receiveHealth.ok
+          ? h('p', { style: s.err }, '⚠️ 接收不可用：' + (p.receiveHealth.reason || '未知原因'))
+          : null,
+        h(LoginPanel, { login, onClose: onCloseLogin, onRetry: startLogin }),
       );
     }
 
     function PendingList({ pending, onChanged }) {
       if (!pending || pending.length === 0) return null;
       const decide = async (p, approved) => {
-        await fetch('/im-connect/api/approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: p.provider, senderId: p.senderId, approved }) });
+        await fetch('/im-connect/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: p.provider, senderId: p.senderId, approved }),
+        });
         onChanged();
       };
-      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-        h('h4', { style: { margin: '12px 0 0', fontSize: '14px' } }, `待批准私聊（${pending.length}）`),
-        pending.map((p) => h('div', { key: p.provider + ':' + p.senderId, style: style.pendingRow },
-          h('span', { style: style.name }, p.provider === 'dingtalk' ? '钉钉' : '企业微信'),
-          h('span', { style: style.pendingText }, (p.senderName || p.senderId) + '：' + p.lastText),
-          h('button', { style: style.approve, onClick: () => decide(p, true) }, '批准'),
-          h('button', { style: style.reject, onClick: () => decide(p, false) }, '拒绝'),
+      return h('div', { style: s.card },
+        h('p', { style: s.sectionTitle }, `待批准私聊（${pending.length}）`),
+        pending.map((p) => h('div', { key: p.provider + ':' + p.senderId, style: { ...s.row, paddingTop: 4 } },
+          h('div', { style: s.rowMain },
+            h('span', { style: s.name }, p.provider === 'dingtalk' ? '钉钉' : '企业微信'),
+            h('span', { style: s.account, title: p.lastText }, (p.senderName || p.senderId) + '：' + p.lastText),
+          ),
+          h('div', { style: s.rowSide },
+            h('button', { style: s.btnPrimary, onClick: () => decide(p, true) }, '批准'),
+            h('button', { style: s.btn, onClick: () => decide(p, false) }, '拒绝'),
+          ),
         )),
       );
     }
@@ -96,19 +166,17 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState({ providers: [], pending: [] });
       const [login, setLogin] = useState(null);
       const [error, setError] = useState(null);
-      const [test, setTest] = useState(null);
-      const [testing, setTesting] = useState(false);
 
       const refresh = useCallback(() => {
         fetch('/im-connect/api/state')
           .then((r) => r.json())
-          .then((s) => { setError(null); setState(s); })
+          .then((st) => { setError(null); setState(st); })
           .catch((e) => setError(String(e)));
       }, []);
 
       useEffect(() => {
         refresh();
-        const t = setInterval(refresh, 8000);
+        const t = setInterval(refresh, 30_000); // 状态兜底刷新（操作后立即刷新，不等轮询）
         return () => clearInterval(t);
       }, [refresh]);
 
@@ -117,9 +185,9 @@ window.__ModuleLoader__.load({
         const t = setInterval(() => {
           fetch('/im-connect/api/login-status')
             .then((r) => r.json())
-            .then((s) => { setLogin(s); if (s.state !== 'waiting') refresh(); })
+            .then((st) => { setLogin(st); if (st.state !== 'waiting') refresh(); })
             .catch(() => {});
-        }, 2000);
+        }, 1500);
         return () => clearInterval(t);
       }, [login ? login.state : null, login ? login.provider : null, refresh]);
 
@@ -128,30 +196,27 @@ window.__ModuleLoader__.load({
       };
       const closeLogin = () => setLogin(null);
 
-      const providers = (state.providers || []).map((p) => Object.assign({}, p, {
-        _startLogin: () => startLogin(p.id),
-        _closeLogin: closeLogin,
-      }));
+      const mount = { refresh, startLogin };
+      const providers = state.providers || [];
 
-      const runTest = () => {
-        setTesting(true);
-        setTest(null);
-        fetch('/im-connect/api/selftest', { method: 'POST' })
-          .then((r) => r.json())
-          .then((r) => setTest(r))
-          .catch((e) => setTest({ ok: false, error: String(e) }))
-          .finally(() => setTesting(false));
-      };
-
-      return h('div', { style: style.card },
-        h('h3', { style: style.title }, 'IM 连接'),
-        h('p', { style: style.hint }, '钉钉为「以你的账号代回复」：别人在群里 @你、或私聊你（批准后），DSH 自动替你在原会话回复；钉钉侧不会出现新的机器人，无需查找。'),
-        error ? h('p', { style: style.err }, `无法连接本机服务：${error}`) : null,
-        providers.map((p) => h(ProviderRow, { key: p.id, p, login: login && login.provider === p.id ? login : null })),
-        h('p', { style: style.note }, '自检会新建一个会话并跑一轮真实 Agent 回合，只验证「引擎→会话→回复」链路，不发送任何 IM 消息。'),
-        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
-          h('button', { style: style.button, onClick: runTest, disabled: testing }, testing ? '自检中…' : '运行自检（验证 Agent 链路）'),
-          test ? h('p', { style: test.ok ? style.ok : style.err }, test.ok ? `✅ 自检通过（${test.elapsedMs}ms）：${test.reply || '（无回复文本）'}` : `❌ 自检失败：${test.error}`) : null,
+      return h('div', { style: s.wrap },
+        h('div', { style: s.head },
+          h('h3', { style: s.title }, 'IM 连接'),
+          h('p', { style: s.desc }, '钉钉以你的账号代为回复：别人在群里 @你、或私聊你（批准后），DSH 会自动在原会话回复；钉钉侧不会出现新的机器人。'),
+        ),
+        error ? h('p', { style: s.err }, '无法连接本机服务：' + error) : null,
+        h('div', { style: s.card },
+          h('p', { style: s.sectionTitle }, '连接器'),
+          h('div', { style: s.divider }),
+          providers.length === 0
+            ? h('p', { style: s.empty }, '加载中…')
+            : providers.map((p) => h(ProviderCard, {
+                key: p.id,
+                p,
+                login: login && login.provider === p.id ? login : null,
+                onMountLogin: mount,
+                onCloseLogin: closeLogin,
+              })),
         ),
         h(PendingList, { pending: state.pending || [], onChanged: refresh }),
       );
