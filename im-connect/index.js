@@ -4569,9 +4569,11 @@ var require_lib = __commonJS({
 });
 
 // src/plugin/index.ts
-import { join as join4 } from "node:path";
+import { existsSync as existsSync2, rmSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 
 // src/plugin/engine.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
 
@@ -4862,9 +4864,10 @@ function str(v) {
   return typeof v === "string" && v ? v : void 0;
 }
 function extractText(data) {
+  if (typeof data.content === "string" && data.content) return data.content;
   const text = data.text;
   if (text && typeof text.content === "string" && text.content) return text.content;
-  return str(data.content) ?? str(data.text);
+  return str(data.text);
 }
 function normalizeDingTalkEvent(line) {
   let parsed;
@@ -4875,16 +4878,20 @@ function normalizeDingTalkEvent(line) {
   }
   const envelope = parsed;
   const data = envelope.data ?? envelope;
-  const conversationId = str(data.conversationId) ?? str(data.groupId) ?? str(data.openConversationId);
+  const type = str(data.type) ?? str(envelope.type) ?? "";
+  const conversationId = str(data.conversation_id) ?? str(data.conversationId) ?? str(data.groupId) ?? str(data.openConversationId);
   const text = extractText(data);
   if (!conversationId || !text) return null;
+  const direct = /direct/i.test(type) || data.conversationType === "1";
+  const atMe = /_at$|receive_at/.test(type);
   return {
     conversationId,
-    conversationType: data.conversationType === "1" ? "direct" : "group",
-    senderId: str(data.senderStaffId) ?? str(data.senderId),
-    senderName: str(data.senderNick) ?? str(data.senderName),
+    conversationType: direct ? "direct" : "group",
+    senderId: str(data.sender_staff_id) ?? str(data.senderStaffId) ?? str(data.sender_id) ?? str(data.sender_open_dingtalk_id) ?? str(data.senderOpenDingTalkId),
+    senderName: str(data.sender) ?? str(data.senderNick) ?? str(data.senderName),
+    senderOpenDingTalkId: str(data.sender_open_dingtalk_id) ?? str(data.senderOpenDingTalkId) ?? str(data.openDingTalkId),
     text,
-    mentionedBot: typeof data.mentionedBot === "boolean" ? data.mentionedBot : typeof data.isAtBot === "boolean" ? data.isAtBot : void 0,
+    mentionedBot: typeof data.mentionedBot === "boolean" ? data.mentionedBot : typeof data.isAtBot === "boolean" ? data.isAtBot : atMe ? true : void 0,
     raw: data
   };
 }
@@ -4895,9 +4902,26 @@ var DingTalkChannel = class {
     this.runner = runner ?? new CliRunner(dingtalk);
   }
   async sendText(target, text) {
+    const base = ["chat", "+messages-send"];
+    if (target.kind === "direct") {
+      if (target.openDingTalkId) {
+        return this.runner.runJson([
+          ...base,
+          "--open-dingtalk-id",
+          target.openDingTalkId,
+          "--markdown",
+          text,
+          "--identity",
+          "user",
+          "--yes"
+        ]);
+      }
+      if (target.userId) {
+        return this.runner.runJson([...base, "--user", target.userId, "--markdown", text, "--identity", "user", "--yes"]);
+      }
+    }
     return this.runner.runJson([
-      "chat",
-      "+messages-send",
+      ...base,
       "--group",
       target.conversationId,
       "--markdown",
@@ -4907,15 +4931,24 @@ var DingTalkChannel = class {
       "--yes"
     ]);
   }
+  /** 同时监听「群里 @我」与「私聊」（两个 Stream 连接），任一断开由引擎监督重启。 */
   async listen(onMessage) {
-    return this.runner.stream(
-      ["event", "+listen-im", "--kind", "all-group", "--format", "ndjson"],
-      (line) => {
-        if (line.startsWith("\0")) return;
-        const message = normalizeDingTalkEvent(line);
-        if (message) onMessage(message);
-      }
-    );
+    const handles = [];
+    for (const kind of ["at-me", "all-direct"]) {
+      handles.push(
+        await this.runner.stream(["event", "+listen-im", "--kind", kind, "--format", "ndjson"], (line) => {
+          if (line.startsWith("\0")) return;
+          const message = normalizeDingTalkEvent(line);
+          if (message) onMessage(message);
+        })
+      );
+    }
+    return {
+      stop: () => {
+        for (const handle of handles) handle.stop();
+      },
+      done: Promise.race(handles.map((handle) => handle.done))
+    };
   }
   async status() {
     return this.runner.runJson(["auth", "status"]);
@@ -4997,6 +5030,10 @@ function fmtLocal(d) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
+var wecomHealth = {
+  lastError: null,
+  lastProbeAt: null
+};
 var WeComChannel = class {
   providerId = "wecom";
   runner;
@@ -5055,6 +5092,8 @@ var WeComChannel = class {
       lastEnd = end.getTime();
       try {
         const groups = await this.listGroups(fmtLocal(begin), fmtLocal(end));
+        wecomHealth.lastError = null;
+        wecomHealth.lastProbeAt = Date.now();
         for (const chatId of extractGroupIds(groups)) {
           try {
             const payload = await this.listMessages(chatId, fmtLocal(begin), fmtLocal(end));
@@ -5068,10 +5107,12 @@ var WeComChannel = class {
               }
               onMessage(message);
             }
-          } catch {
+          } catch (e) {
+            wecomHealth.lastError = e?.message ?? String(e);
           }
         }
-      } catch {
+      } catch (e) {
+        wecomHealth.lastError = e?.message ?? String(e);
       }
     };
     void poll();
@@ -5118,13 +5159,32 @@ var JsonSessionMap = class {
     }
   }
 };
-function dataFile(ctx) {
+function dataDirOf(ctx) {
   const dir = ctx.baseDir ?? join2(process.env.TEMP ?? "/tmp", "im-connect");
   mkdirSync(dir, { recursive: true });
-  return join2(dir, "session-map.json");
+  return dir;
+}
+function dataFile(ctx) {
+  return join2(dataDirOf(ctx), "session-map.json");
 }
 var PENDING_NOTICE = "\u3010IM \u8FDE\u63A5\u3011\u4F60\u7684\u6D88\u606F\u5DF2\u8FDB\u5165\u5F85\u6279\u51C6\u5217\u8868\uFF0C\u7BA1\u7406\u5458\u6279\u51C6\u540E\u5373\u53EF\u4E0E\u672C\u673A\u52A9\u624B\u5BF9\u8BDD\u3002";
+function reclaimOrphanListeners() {
+  if (process.platform !== "win32") return;
+  try {
+    spawnSync2(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'listen-im' -and $_.CommandLine -notmatch 'tsx' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+      ],
+      { windowsHide: true }
+    );
+  } catch {
+  }
+}
 function createEngine(ctx, channels = listChannels(), opts = {}) {
+  reclaimOrphanListeners();
   const log = ctx.logger ?? { info: () => {
   }, warn: () => {
   }, error: () => {
@@ -5132,13 +5192,33 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
   const store = new JsonSessionMap(dataFile(ctx));
   const activeStops = /* @__PURE__ */ new Set();
   const selfIds = /* @__PURE__ */ new Set();
+  const selfNames = /* @__PURE__ */ new Set();
   let disposed = false;
+  const generation = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const generationFile = join2(dataDirOf(ctx), "engine-generation");
+  try {
+    writeFileSync(generationFile, generation);
+  } catch {
+  }
+  const isCurrentGeneration = () => {
+    try {
+      return readFileSync(generationFile, "utf8").trim() === generation;
+    } catch {
+      return false;
+    }
+  };
   const dispatch = async (channel, message) => {
-    if (disposed) return;
+    if (disposed || !isCurrentGeneration()) return;
     try {
       if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
+      const target = message.conversationType === "direct" ? {
+        conversationId: message.conversationId,
+        kind: "direct",
+        userId: message.senderId,
+        openDingTalkId: message.senderOpenDingTalkId
+      } : { conversationId: message.conversationId, kind: "group" };
       const isApproved = opts.access ? (senderId) => opts.access.isApproved(channel.providerId, senderId) : void 0;
-      if (!gateAllows(message, selfIds, isApproved)) {
+      if (!gateAllows(message, selfIds, isApproved, selfNames)) {
         if (opts.access && message.conversationType === "direct" && message.senderId && !opts.access.isApproved(channel.providerId, message.senderId)) {
           const first = opts.access.recordPending(channel.providerId, {
             senderId: message.senderId,
@@ -5148,7 +5228,7 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
           if (first) {
             opts.access.markNotified(channel.providerId, message.senderId);
             try {
-              await channel.sendText({ conversationId: message.conversationId }, PENDING_NOTICE);
+              await channel.sendText(target, PENDING_NOTICE);
             } catch {
             }
           }
@@ -5176,7 +5256,7 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
       );
       const reply = await collectReply(ctx, sessionId);
       if (reply.trim()) {
-        await channel.sendText({ conversationId: message.conversationId }, reply.trim());
+        await channel.sendText(target, reply.trim());
         log.info(`[im-connect] replied to ${channel.providerId}:${message.conversationId}`);
       }
     } catch (e) {
@@ -5186,18 +5266,26 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const supervise = async (channel) => {
     let backoff = 5e3;
-    while (!disposed) {
+    while (!disposed && isCurrentGeneration()) {
       let handle;
       try {
         log.info(`[im-connect] ${channel.providerId} listener starting`);
         handle = await channel.listen((m) => {
           void dispatch(channel, m);
         });
+        if (disposed || !isCurrentGeneration()) {
+          try {
+            handle.stop();
+          } catch {
+          }
+          break;
+        }
         activeStops.add(handle.stop);
         try {
           const status = await channel.status();
           const selfId = status.user_id ?? status.userid;
           if (selfId) selfIds.add(String(selfId));
+          if (status.user_name) selfNames.add(status.user_name);
         } catch {
         }
         await handle.done;
@@ -5205,7 +5293,11 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
         log.warn(`[im-connect] ${channel.providerId} listen failed: ${String(e)}`);
       }
       if (handle) activeStops.delete(handle.stop);
-      if (disposed) break;
+      if (disposed || !isCurrentGeneration()) break;
+      try {
+        handle?.stop();
+      } catch {
+      }
       log.warn(`[im-connect] ${channel.providerId} listener ended, restarting in ${backoff}ms`);
       await sleep(backoff);
       backoff = Math.min(backoff * 2, 6e4);
@@ -5226,15 +5318,38 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
       } catch {
       }
     }
+    reclaimOrphanListeners();
   };
   ctx.onDispose?.(stop);
   return stop;
 }
-function gateAllows(message, selfIds, isApproved) {
+function gateAllows(message, selfIds, isApproved, selfNames) {
   if (message.senderId && selfIds.has(message.senderId)) return false;
+  if (selfNames && message.senderName && selfNames.has(message.senderName)) return false;
   if (message.conversationType === "group") return message.mentionedBot === true;
   if (!message.senderId) return false;
   return isApproved ? isApproved(message.senderId) : true;
+}
+async function runSelfTest(ctx) {
+  const started = Date.now();
+  try {
+    const created = await ctx.sessionController.create({});
+    const sessionId = created.sessionId;
+    await ctx.sessionController.resolveAgent(sessionId);
+    await ctx.sessionController.prompt(
+      {
+        requestId: `selftest-${Date.now().toString(36)}`,
+        sessionId,
+        mode: "queue",
+        content: [{ type: "text", text: "\u81EA\u68C0\uFF1A\u8BF7\u53EA\u56DE\u590D\u300C\u81EA\u68C0\u901A\u8FC7\u300D\u56DB\u4E2A\u5B57\uFF0C\u4E0D\u8981\u8C03\u7528\u4EFB\u4F55\u5DE5\u5177\u3002" }]
+      },
+      new AbortController().signal
+    );
+    const reply = await collectReply(ctx, sessionId);
+    return { ok: true, sessionId, reply: reply.trim(), elapsedMs: Date.now() - started };
+  } catch (e) {
+    return { ok: false, error: e?.message ?? String(e), elapsedMs: Date.now() - started };
+  }
 }
 async function collectReply(ctx, sessionId) {
   const ac = new AbortController();
@@ -5374,37 +5489,46 @@ var JsonConfigStore = class {
 
 // src/plugin/host.ts
 var import_qrcode = __toESM(require_lib(), 1);
-import { spawn as spawn2 } from "node:child_process";
-var LOGIN_COMMANDS = {
-  dingtalk: { bin: "dws", args: ["auth", "login", "--device", "--recommend"] },
-  wecom: { bin: "wecom-cli", args: ["auth", "init", "--noninteractive"] }
-};
+import { spawn as spawn2, spawnSync as spawnSync3 } from "node:child_process";
+import { readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
+var LOGIN_TIMEOUT_MS = 18e4;
+function loginCommand(provider) {
+  if (provider === "dingtalk") {
+    return { bin: "dws", args: ["auth", "login", "--device", "--no-browser"] };
+  }
+  if (provider === "wecom") {
+    const qrFile = join4(resolveDataDir(), "wecom-login-qr.png");
+    return {
+      bin: "wecom-cli",
+      args: ["auth", "init", "--noninteractive", "--no-browser", "--output-qrcode", qrFile],
+      qrFile
+    };
+  }
+  return null;
+}
 function extractLoginUrl(output) {
   const m = output.match(/https?:\/\/[^\s"'<>)\]]+/);
   return m ? m[0] : void 0;
 }
 var ImConnectHost = class {
   config;
-  login = {
-    running: false,
-    output: "",
-    done: true,
-    exitCode: null,
-    startedAt: 0
-  };
+  login = { state: "idle", output: "", startedAt: 0 };
+  loginChild;
   constructor(config) {
     this.config = config;
   }
   startLogin(provider) {
-    const cmd = LOGIN_COMMANDS[provider];
+    const cmd = loginCommand(provider);
     if (!cmd) return { ok: false, error: `unknown provider: ${provider}` };
-    if (this.login.running) return { ok: false, error: "a login is already running" };
-    this.login = { running: true, provider, output: "", done: false, exitCode: null, startedAt: Date.now() };
+    if (this.login.state === "waiting") return { ok: false, error: "a login is already running" };
+    this.login = { state: "waiting", provider, output: "", startedAt: Date.now(), qrFile: cmd.qrFile };
     const child = spawn2(cmd.bin, cmd.args, {
       shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true
     });
+    this.loginChild = child;
     const append = (chunk) => {
       this.login.output += chunk.toString("utf8");
       if (this.login.output.length > 2e4) {
@@ -5414,24 +5538,42 @@ var ImConnectHost = class {
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
-    child.on("exit", (code) => {
-      this.login.running = false;
-      this.login.done = true;
-      this.login.exitCode = code;
-    });
+    const finish = (code) => {
+      if (this.login.state !== "waiting") return;
+      this.login.finishedAt = Date.now();
+      this.login.state = code === 0 ? "authorized" : "failed";
+      if (code !== 0) {
+        this.login.error = summarizeOutput(this.login.output) ?? `\u767B\u5F55\u8FDB\u7A0B\u9000\u51FA\u7801 ${code}`;
+      }
+    };
+    child.on("exit", (code) => finish(code));
     return { ok: true };
   }
   getLoginStatus() {
+    if (this.login.state === "waiting" && Date.now() - this.login.startedAt > LOGIN_TIMEOUT_MS) {
+      this.killLoginChild();
+      this.login.state = "timeout";
+      this.login.finishedAt = Date.now();
+      this.login.error = `\u767B\u5F55\u672A\u5728 ${Math.round(LOGIN_TIMEOUT_MS / 1e3)} \u79D2\u5185\u5B8C\u6210`;
+    }
     return { ...this.login };
   }
-  /** 聚合各渠道的接收开关、连接状态、待批准与白名单。 */
+  /** 聚合各渠道的接收开关、连接状态、账号、待批准与能力健康度。 */
   async collectState() {
     const providers = [];
     const pending = [];
     for (const channel of listChannels()) {
       let connected = false;
+      let account;
       try {
-        connected = await isConnected(channel);
+        const status = await channel.status();
+        if (typeof status === "string") {
+          connected = status.trim() === "authorized";
+          account = connected ? "\u5DF2\u6388\u6743" : void 0;
+        } else if (status && typeof status === "object") {
+          connected = Boolean(status.authenticated ?? status.token_valid);
+          if (status.user_name) account = status.corp_name ? `${status.user_name} @ ${status.corp_name}` : status.user_name;
+        }
       } catch {
         connected = false;
       }
@@ -5439,7 +5581,9 @@ var ImConnectHost = class {
         id: channel.providerId,
         displayName: displayNameOf(channel.providerId),
         receive: this.config.getReceive(channel.providerId),
-        connected
+        connected,
+        account,
+        receiveHealth: channel.providerId === "wecom" ? wecomHealth.lastError ? { ok: false, reason: wecomHealth.lastError } : wecomHealth.lastProbeAt ? { ok: true } : void 0 : void 0
       });
       for (const p of this.config.listPending(channel.providerId)) {
         pending.push({
@@ -5455,8 +5599,14 @@ var ImConnectHost = class {
     pending.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
     return { providers, pending };
   }
-  /** 当前登录授权 URL 的二维码 PNG（无登录时 null）。 */
+  /** 当前登录二维码 PNG：climp 写的文件优先，其次用提取到的 URL 现场生成。 */
   async qrImage() {
+    if (this.login.state === "waiting" && this.login.qrFile) {
+      try {
+        return readFileSync3(this.login.qrFile);
+      } catch {
+      }
+    }
     if (!this.login.url) return null;
     try {
       return await import_qrcode.default.toBuffer(this.login.url, { width: 264, margin: 2 });
@@ -5464,12 +5614,24 @@ var ImConnectHost = class {
       return null;
     }
   }
+  killLoginChild() {
+    const child = this.loginChild;
+    if (!child) return;
+    try {
+      if (process.platform === "win32" && child.pid) {
+        spawnSync3("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+      } else {
+        child.kill("SIGTERM");
+      }
+    } catch {
+    }
+  }
 };
-async function isConnected(channel) {
-  const status = await channel.status();
-  if (typeof status === "string") return status.trim() === "authorized";
-  if (status && typeof status === "object") return Boolean(status.authenticated ?? status.token_valid);
-  return false;
+function summarizeOutput(output) {
+  const lines = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return void 0;
+  const last = lines[lines.length - 1];
+  return last.length > 300 ? last.slice(0, 300) : last;
 }
 function displayNameOf(id) {
   return id === "dingtalk" ? "\u9489\u9489" : id === "wecom" ? "\u4F01\u4E1A\u5FAE\u4FE1" : id;
@@ -5491,7 +5653,7 @@ function readBody(req) {
     });
   });
 }
-function registerRoutes(ctx, host) {
+function registerRoutes(ctx, host, selfTest) {
   const BASE = "/im-connect/api";
   const disposers = [];
   const register = (path, handler) => {
@@ -5564,6 +5726,17 @@ function registerRoutes(ctx, host) {
       host.config.approve(String(body.provider ?? ""), String(body.senderId ?? ""), Boolean(body.approved))
     );
   });
+  register(`${BASE}/selftest`, async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    if (!selfTest) {
+      sendJson(res, 503, { ok: false, error: "self-test not wired" });
+      return;
+    }
+    sendJson(res, 200, await selfTest());
+  });
   return () => {
     for (const dispose of disposers.splice(0)) {
       try {
@@ -5576,9 +5749,18 @@ function registerRoutes(ctx, host) {
 
 // src/plugin/index.ts
 var inject = ["sessionController", "webServer", "connection"];
+var ACTIVE_ENGINE = /* @__PURE__ */ Symbol.for("im-connect.active-engine");
 function apply(ctx) {
+  const g = globalThis;
+  const previous = g[ACTIVE_ENGINE];
+  if (typeof previous === "function") {
+    try {
+      previous();
+    } catch {
+    }
+  }
   const dataDir = resolveDataDir();
-  const config = new JsonConfigStore(join4(dataDir, "config.json"));
+  const config = new JsonConfigStore(join5(dataDir, "config.json"));
   const host = new ImConnectHost(config);
   const engineCtx = {
     sessionController: ctx.sessionController,
@@ -5594,9 +5776,23 @@ function apply(ctx) {
       markNotified: (providerId, senderId) => config.markNotified(providerId, senderId)
     }
   });
+  try {
+    const flag = join5(dataDir, "run-selftest");
+    if (existsSync2(flag)) {
+      rmSync(flag, { force: true });
+      void runSelfTest(engineCtx).then((result) => {
+        try {
+          writeFileSync3(join5(dataDir, "selftest-result.json"), JSON.stringify(result, null, 2));
+        } catch {
+        }
+      });
+    }
+  } catch {
+  }
   const stopRoutes = registerRoutes(
     { webServer: ctx.webServer, connection: ctx.connection },
-    host
+    host,
+    () => runSelfTest(engineCtx)
   );
   const dispose = () => {
     try {
@@ -5607,7 +5803,9 @@ function apply(ctx) {
       stopRoutes();
     } catch {
     }
+    if (g[ACTIVE_ENGINE] === dispose) delete g[ACTIVE_ENGINE];
   };
+  g[ACTIVE_ENGINE] = dispose;
   ctx.on("dispose", dispose);
   return dispose;
 }

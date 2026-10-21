@@ -72,11 +72,17 @@ function fmtLocal(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+/** wecom 接收能力健康度（轮询最后一次结果），供设置页展示原因。 */
+export const wecomHealth: { lastError: string | null; lastProbeAt: number | null } = {
+  lastError: null,
+  lastProbeAt: null,
+};
+
 /**
  * 企业微信渠道（基于 wecom-cli）：
- * - 发：`wecom-cli message send --chat-id <id> --msg-type text --text '{"content":"..."}'`
  * - 收：轮询 `chat groups list` + `chat messages list`（wecom-cli 无推送；
- *   需企业已开通会话读取能力，否则返回 853006）
+ *   需企业开通机器人会话读取能力，否则返回 853006）
+ * - 发：`wecom-cli message send --chat-id <id> --msg-type text --text '{"content":"..."}'`
  * - 状态：`wecom-cli auth show --status`
  */
 export class WeComChannel implements ImChannel {
@@ -151,6 +157,8 @@ export class WeComChannel implements ImChannel {
       lastEnd = end.getTime();
       try {
         const groups = await this.listGroups(fmtLocal(begin), fmtLocal(end));
+        wecomHealth.lastError = null;
+        wecomHealth.lastProbeAt = Date.now();
         for (const chatId of extractGroupIds(groups)) {
           try {
             const payload = await this.listMessages(chatId, fmtLocal(begin), fmtLocal(end));
@@ -165,12 +173,12 @@ export class WeComChannel implements ImChannel {
               }
               onMessage(message);
             }
-          } catch {
-            /* 单个群失败不影响其它群 */
+          } catch (e) {
+            wecomHealth.lastError = (e as Error)?.message ?? String(e);
           }
         }
-      } catch {
-        /* 单轮失败，下轮重试 */
+      } catch (e) {
+        wecomHealth.lastError = (e as Error)?.message ?? String(e);
       }
     };
 

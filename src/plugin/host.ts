@@ -1,25 +1,43 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import QRCode from "qrcode";
 import { listChannels } from "../channels/registry.js";
+import { wecomHealth } from "../channels/wecom.js";
 import type { ImChannel } from "../channels/types.js";
-import type { JsonConfigStore } from "./config.js";
+import { resolveDataDir, type JsonConfigStore } from "./config.js";
 
-/** 各平台的扫码登录命令（终端二维码）。 */
-const LOGIN_COMMANDS: Record<string, { bin: string; args: string[] }> = {
-  dingtalk: { bin: "dws", args: ["auth", "login", "--device", "--recommend"] },
-  wecom: { bin: "wecom-cli", args: ["auth", "init", "--noninteractive"] },
-};
+/** 登录超时：超时仍未完成则终止进程并标记 timeout。 */
+const LOGIN_TIMEOUT_MS = 180_000;
 
 export interface LoginState {
-  running: boolean;
+  state: "idle" | "waiting" | "authorized" | "failed" | "timeout";
   provider?: string;
   output: string;
-  done: boolean;
-  exitCode: number | null;
-  /** 从登录输出中提取的授权 URL（用于渲染二维码图片）。 */
+  error?: string;
+  /** 从输出中提取的授权 URL。 */
   url?: string;
+  /** wecom-cli 用 --output-qrcode 直接写出的二维码 PNG 路径。 */
+  qrFile?: string;
   startedAt: number;
+  finishedAt?: number;
+}
+
+/** 各平台扫码命令：钉钉设备流（不自动开浏览器）；企微机器人授权（直接输出二维码 PNG）。 */
+function loginCommand(provider: string): { bin: string; args: string[]; qrFile?: string } | null {
+  if (provider === "dingtalk") {
+    return { bin: "dws", args: ["auth", "login", "--device", "--no-browser"] };
+  }
+  if (provider === "wecom") {
+    const qrFile = join(resolveDataDir(), "wecom-login-qr.png");
+    return {
+      bin: "wecom-cli",
+      args: ["auth", "init", "--noninteractive", "--no-browser", "--output-qrcode", qrFile],
+      qrFile,
+    };
+  }
+  return null;
 }
 
 /** 从终端输出提取第一个授权链接。 */
@@ -31,28 +49,24 @@ export function extractLoginUrl(output: string): string | undefined {
 /** Host 侧管理面：扫码登录进程 + 状态聚合。 */
 export class ImConnectHost {
   readonly config: JsonConfigStore;
-  private login: LoginState = {
-    running: false,
-    output: "",
-    done: true,
-    exitCode: null,
-    startedAt: 0,
-  };
+  private login: LoginState = { state: "idle", output: "", startedAt: 0 };
+  private loginChild?: ReturnType<typeof spawn>;
 
   constructor(config: JsonConfigStore) {
     this.config = config;
   }
 
   startLogin(provider: string): { ok: boolean; error?: string } {
-    const cmd = LOGIN_COMMANDS[provider];
+    const cmd = loginCommand(provider);
     if (!cmd) return { ok: false, error: `unknown provider: ${provider}` };
-    if (this.login.running) return { ok: false, error: "a login is already running" };
-    this.login = { running: true, provider, output: "", done: false, exitCode: null, startedAt: Date.now() };
+    if (this.login.state === "waiting") return { ok: false, error: "a login is already running" };
+    this.login = { state: "waiting", provider, output: "", startedAt: Date.now(), qrFile: cmd.qrFile };
     const child = spawn(cmd.bin, cmd.args, {
       shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    this.loginChild = child;
     const append = (chunk: Buffer): void => {
       this.login.output += chunk.toString("utf8");
       if (this.login.output.length > 20000) {
@@ -62,21 +76,39 @@ export class ImConnectHost {
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
-    child.on("exit", (code) => {
-      this.login.running = false;
-      this.login.done = true;
-      this.login.exitCode = code;
-    });
+    const finish = (code: number | null): void => {
+      if (this.login.state !== "waiting") return;
+      this.login.finishedAt = Date.now();
+      this.login.state = code === 0 ? "authorized" : "failed";
+      if (code !== 0) {
+        this.login.error = summarizeOutput(this.login.output) ?? `登录进程退出码 ${code}`;
+      }
+    };
+    child.on("exit", (code) => finish(code));
     return { ok: true };
   }
 
   getLoginStatus(): LoginState {
+    // 超时看护：等待超过 LOGIN_TIMEOUT_MS 仍未完成 → 终止并标记
+    if (this.login.state === "waiting" && Date.now() - this.login.startedAt > LOGIN_TIMEOUT_MS) {
+      this.killLoginChild();
+      this.login.state = "timeout";
+      this.login.finishedAt = Date.now();
+      this.login.error = `登录未在 ${Math.round(LOGIN_TIMEOUT_MS / 1000)} 秒内完成`;
+    }
     return { ...this.login };
   }
 
-  /** 聚合各渠道的接收开关、连接状态、待批准与白名单。 */
+  /** 聚合各渠道的接收开关、连接状态、账号、待批准与能力健康度。 */
   async collectState(): Promise<{
-    providers: Array<{ id: string; displayName: string; receive: boolean; connected: boolean }>;
+    providers: Array<{
+      id: string;
+      displayName: string;
+      receive: boolean;
+      connected: boolean;
+      account?: string;
+      receiveHealth?: { ok: boolean; reason?: string };
+    }>;
     pending: Array<{
       provider: string;
       senderId: string;
@@ -90,8 +122,23 @@ export class ImConnectHost {
     const pending = [];
     for (const channel of listChannels()) {
       let connected = false;
+      let account: string | undefined;
       try {
-        connected = await isConnected(channel);
+        const status = (await channel.status()) as
+          | string
+          | {
+              authenticated?: boolean;
+              token_valid?: boolean;
+              user_name?: string;
+              corp_name?: string;
+            };
+        if (typeof status === "string") {
+          connected = status.trim() === "authorized";
+          account = connected ? "已授权" : undefined;
+        } else if (status && typeof status === "object") {
+          connected = Boolean(status.authenticated ?? status.token_valid);
+          if (status.user_name) account = status.corp_name ? `${status.user_name} @ ${status.corp_name}` : status.user_name;
+        }
       } catch {
         connected = false;
       }
@@ -100,6 +147,15 @@ export class ImConnectHost {
         displayName: displayNameOf(channel.providerId),
         receive: this.config.getReceive(channel.providerId),
         connected,
+        account,
+        receiveHealth:
+          channel.providerId === "wecom"
+            ? wecomHealth.lastError
+              ? { ok: false, reason: wecomHealth.lastError }
+              : wecomHealth.lastProbeAt
+                ? { ok: true }
+                : undefined
+            : undefined,
       });
       for (const p of this.config.listPending(channel.providerId)) {
         pending.push({
@@ -116,8 +172,15 @@ export class ImConnectHost {
     return { providers, pending };
   }
 
-  /** 当前登录授权 URL 的二维码 PNG（无登录时 null）。 */
+  /** 当前登录二维码 PNG：climp 写的文件优先，其次用提取到的 URL 现场生成。 */
   async qrImage(): Promise<Buffer | null> {
+    if (this.login.state === "waiting" && this.login.qrFile) {
+      try {
+        return readFileSync(this.login.qrFile);
+      } catch {
+        /* 文件尚未生成，回退 URL */
+      }
+    }
     if (!this.login.url) return null;
     try {
       return await QRCode.toBuffer(this.login.url, { width: 264, margin: 2 });
@@ -125,15 +188,35 @@ export class ImConnectHost {
       return null;
     }
   }
+
+  private killLoginChild(): void {
+    const child = this.loginChild;
+    if (!child) return;
+    try {
+      if (process.platform === "win32" && child.pid) {
+        spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+      } else {
+        child.kill("SIGTERM");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** 从登录输出中提取可读的错误摘要（取最后一个非空行，截断）。 */
+function summarizeOutput(output: string): string | undefined {
+  const lines = output
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return undefined;
+  const last = lines[lines.length - 1];
+  return last.length > 300 ? last.slice(0, 300) : last;
 }
 
 async function isConnected(channel: ImChannel): Promise<boolean> {
-  const status = (await channel.status()) as
-    | string
-    | { authenticated?: boolean; token_valid?: boolean };
-  if (typeof status === "string") return status.trim() === "authorized"; // wecom
-  if (status && typeof status === "object") return Boolean(status.authenticated ?? status.token_valid);
-  return false;
+  return (await channel.status()) !== undefined;
 }
 
 function displayNameOf(id: string): string {
@@ -173,14 +256,15 @@ interface ConnectionLike {
 
 /**
  * 注册管理 HTTP 路由（与 Web GUI 同源，浏览器 fetch 相对路径即可）：
- * GET /im-connect/api/state、POST /im-connect/api/receive、POST /im-connect/api/login、
- * GET /im-connect/api/login-status、GET /im-connect/api/qr.png、POST /im-connect/api/approve。
+ * GET  /im-connect/api/state | POST /receive | POST /login | GET /login-status |
+ * GET  /qr.png | POST /approve | POST /selftest
  * 全部经 connection.requestRejection 鉴权（未授权 401/403）。
  * 返回清理函数：插件卸载时注销全部路由。
  */
 export function registerRoutes(
   ctx: { webServer: WebServerLike; connection: ConnectionLike },
   host: ImConnectHost,
+  selfTest?: () => Promise<unknown>,
 ): () => void {
   const BASE = "/im-connect/api";
   const disposers: Array<() => void> = [];
@@ -264,6 +348,18 @@ export function registerRoutes(
       200,
       host.config.approve(String(body.provider ?? ""), String(body.senderId ?? ""), Boolean(body.approved)),
     );
+  });
+
+  register(`${BASE}/selftest`, async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    if (!selfTest) {
+      sendJson(res, 503, { ok: false, error: "self-test not wired" });
+      return;
+    }
+    sendJson(res, 200, await selfTest());
   });
 
   return () => {

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listChannels } from "../channels/registry.js";
@@ -68,10 +69,14 @@ class JsonSessionMap {
   }
 }
 
-function dataFile(ctx: EngineContext): string {
+function dataDirOf(ctx: EngineContext): string {
   const dir = ctx.baseDir ?? join(process.env.TEMP ?? "/tmp", "im-connect");
   mkdirSync(dir, { recursive: true });
-  return join(dir, "session-map.json");
+  return dir;
+}
+
+function dataFile(ctx: EngineContext): string {
+  return join(dataDirOf(ctx), "session-map.json");
 }
 
 /**
@@ -97,29 +102,75 @@ export interface EngineOptions {
 
 const PENDING_NOTICE = "【IM 连接】你的消息已进入待批准列表，管理员批准后即可与本机助手对话。";
 
+/**
+ * 回收孤儿监听：插件重装/重激活时，上一次实例遗留的 dws listen 进程不会随
+ * 卸载回调可靠终止（Loader 不一定触发 dispose），启动前统一清理。
+ * 只匹配 node.exe 且命令行含 listen-im 的进程，不影响 DSH Host 自身。
+ */
+function reclaimOrphanListeners(): void {
+  if (process.platform !== "win32") return;
+  try {
+    spawnSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -match 'listen-im' -and $_.CommandLine -notmatch 'tsx' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+      ],
+      { windowsHide: true },
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
 export function createEngine(
   ctx: EngineContext,
   channels: ImChannel[] = listChannels(),
   opts: EngineOptions = {},
 ): () => void {
+  reclaimOrphanListeners();
   const log = ctx.logger ?? { info: () => {}, warn: () => {}, error: () => {} };
   const store = new JsonSessionMap(dataFile(ctx));
   const activeStops = new Set<() => void>();
   const selfIds = new Set<string>();
+  const selfNames = new Set<string>();
   let disposed = false;
 
+  // 代际守卫：Loader 卸载时不保证触发 dispose，旧实例的监督循环会不断复活监听。
+  // 每次激活写入新代际标记；旧代际的循环与派发据此自动失效。
+  const generation = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const generationFile = join(dataDirOf(ctx), "engine-generation");
+  try {
+    writeFileSync(generationFile, generation);
+  } catch {
+    /* ignore */
+  }
+  const isCurrentGeneration = (): boolean => {
+    try {
+      return readFileSync(generationFile, "utf8").trim() === generation;
+    } catch {
+      return false;
+    }
+  };
+
   const dispatch = async (channel: ImChannel, message: ImInboundMessage): Promise<void> => {
-    if (disposed) return;
+    if (disposed || !isCurrentGeneration()) return;
     try {
       if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
       const target: ImSendTarget =
         message.conversationType === "direct"
-          ? { conversationId: message.conversationId, kind: "direct", userId: message.senderId }
+          ? {
+              conversationId: message.conversationId,
+              kind: "direct",
+              userId: message.senderId,
+              openDingTalkId: message.senderOpenDingTalkId,
+            }
           : { conversationId: message.conversationId, kind: "group" };
       const isApproved = opts.access
         ? (senderId: string) => opts.access!.isApproved(channel.providerId, senderId)
         : undefined;
-      if (!gateAllows(message, selfIds, isApproved)) {
+      if (!gateAllows(message, selfIds, isApproved, selfNames)) {
         // 未批准的私聊：登记待批准，首次发一次性提示。
         if (
           opts.access &&
@@ -181,22 +232,34 @@ export function createEngine(
    */
   const supervise = async (channel: ImChannel): Promise<void> => {
     let backoff = 5_000;
-    while (!disposed) {
+    while (!disposed && isCurrentGeneration()) {
       let handle: { stop: () => void; done: Promise<void> } | undefined;
       try {
         log.info(`[im-connect] ${channel.providerId} listener starting`);
         handle = await channel.listen((m) => {
           void dispatch(channel, m);
         });
+        // 监听建立期间可能已被新代际取代：立即停掉，避免竞态泄漏。
+        if (disposed || !isCurrentGeneration()) {
+          try {
+            handle.stop();
+          } catch {
+            /* ignore */
+          }
+          break;
+        }
         activeStops.add(handle.stop);
         // 解析“自己”的身份，防止把自己发出的回复当新消息形成回环
         try {
           const status = (await channel.status()) as {
             user_id?: string;
             userid?: string;
+            user_name?: string;
+            user_name_en?: string;
           };
           const selfId = status.user_id ?? status.userid;
           if (selfId) selfIds.add(String(selfId));
+          if (status.user_name) selfNames.add(status.user_name);
         } catch {
           /* 身份解析失败不影响监听 */
         }
@@ -205,7 +268,13 @@ export function createEngine(
         log.warn(`[im-connect] ${channel.providerId} listen failed: ${String(e)}`);
       }
       if (handle) activeStops.delete(handle.stop);
-      if (disposed) break;
+      if (disposed || !isCurrentGeneration()) break;
+      // 重启前先确保旧句柄已停止（避免旧监听进程残留在同一实例的多次重启中累积）
+      try {
+        handle?.stop();
+      } catch {
+        /* ignore */
+      }
       log.warn(`[im-connect] ${channel.providerId} listener ended, restarting in ${backoff}ms`);
       await sleep(backoff);
       backoff = Math.min(backoff * 2, 60_000);
@@ -230,6 +299,8 @@ export function createEngine(
         /* ignore */
       }
     }
+    // 兜底：清理竞态窗口内未登记句柄而残留的监听进程。
+    reclaimOrphanListeners();
   };
   ctx.onDispose?.(stop);
   return stop;
@@ -240,11 +311,46 @@ export function gateAllows(
   message: ImInboundMessage,
   selfIds: ReadonlySet<string>,
   isApproved?: (senderId: string) => boolean,
+  selfNames?: ReadonlySet<string>,
 ): boolean {
   if (message.senderId && selfIds.has(message.senderId)) return false;
+  // 钉钉事件只带 sender 名称（无 staffId），用名字兜底跳过自己
+  if (selfNames && message.senderName && selfNames.has(message.senderName)) return false;
   if (message.conversationType === "group") return message.mentionedBot === true;
   if (!message.senderId) return false;
   return isApproved ? isApproved(message.senderId) : true;
+}
+
+/**
+ * 自检：在本机跑一轮真实的 Agent 回合（建会话 → 派发 → 收集回复），
+ * 用于验证「引擎 → 会话 → 回复」整条链路，不依赖 IM 收发。
+ */
+export async function runSelfTest(ctx: EngineContext): Promise<{
+  ok: boolean;
+  sessionId?: string;
+  reply?: string;
+  elapsedMs?: number;
+  error?: string;
+}> {
+  const started = Date.now();
+  try {
+    const created = await ctx.sessionController.create({});
+    const sessionId = created.sessionId;
+    await ctx.sessionController.resolveAgent(sessionId);
+    await ctx.sessionController.prompt(
+      {
+        requestId: `selftest-${Date.now().toString(36)}`,
+        sessionId,
+        mode: "queue",
+        content: [{ type: "text", text: "自检：请只回复「自检通过」四个字，不要调用任何工具。" }],
+      },
+      new AbortController().signal,
+    );
+    const reply = await collectReply(ctx, sessionId);
+    return { ok: true, sessionId, reply: reply.trim(), elapsedMs: Date.now() - started };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? String(e), elapsedMs: Date.now() - started };
+  }
 }
 
 /** 跟随会话流收集本轮回复文本（text-delta 拼接，end 即止）。 */

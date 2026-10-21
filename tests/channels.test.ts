@@ -61,6 +61,27 @@ describe("channels (fake CLI)", () => {
     ]);
   });
 
+  it("dingtalk sendText to a direct target prefers --open-dingtalk-id", async () => {
+    const ch = new DingTalkChannel(dRunner());
+    const data = (await ch.sendText(
+      { conversationId: "c-1", kind: "direct", openDingTalkId: "DOZF-x" },
+      "hi",
+    )) as { data: { args: string[] } };
+    expect(data.data.args).toEqual([
+      "chat",
+      "+messages-send",
+      "--open-dingtalk-id",
+      "DOZF-x",
+      "--markdown",
+      "hi",
+      "--identity",
+      "user",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+  });
+
   it("wecom sendText → message send --msg-type text --text json", async () => {
     const ch = new WeComChannel(wRunner());
     const data = (await ch.sendText({ conversationId: "chat-1" }, "你好")) as {
@@ -141,7 +162,28 @@ describe("channels (fake CLI)", () => {
     }
   });
 
-  it("normalizeDingTalkEvent parses envelopes and skips non-messages", () => {
+  it("normalizeDingTalkEvent parses the real snake_case payloads and skips non-messages", () => {
+    // 真实 at-me 事件（抓包实测形状）
+    const atMe = JSON.stringify({
+      type: "user_im_message_receive_at",
+      event_id: "e1",
+      message_id: "msg1",
+      conversation_id: "cidVZ...",
+      sender: "马玄",
+      sender_open_dingtalk_id: "DOZF5my7...",
+      content: "IM连接自检 @马玄  消息链路测试",
+      create_time: "2026-10-21 17:29:21",
+    });
+    expect(normalizeDingTalkEvent(atMe)).toMatchObject({
+      conversationId: "cidVZ...",
+      conversationType: "group",
+      senderName: "马玄",
+      senderOpenDingTalkId: "DOZF5my7...",
+      text: "IM连接自检 @马玄  消息链路测试",
+      mentionedBot: true,
+    });
+
+    // 旧 envelope/camelCase 形态仍兼容
     const envelope = JSON.stringify({
       type: "event",
       data: {
@@ -158,6 +200,22 @@ describe("channels (fake CLI)", () => {
       text: "你好",
       mentionedBot: true,
     });
+
+    // 私聊事件（type 含 direct）
+    const direct = JSON.stringify({
+      type: "user_im_message_receive_direct",
+      conversation_id: "cid-d1",
+      sender: "张三",
+      sender_open_dingtalk_id: "DOZF-other",
+      content: "私聊你好",
+    });
+    expect(normalizeDingTalkEvent(direct)).toMatchObject({
+      conversationId: "cid-d1",
+      conversationType: "direct",
+      senderName: "张三",
+      text: "私聊你好",
+    });
+
     expect(normalizeDingTalkEvent("not json")).toBeNull();
     expect(normalizeDingTalkEvent(JSON.stringify({ data: { type: "system" } }))).toBeNull();
   });

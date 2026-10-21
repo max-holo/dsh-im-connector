@@ -5,24 +5,28 @@
 
 /** 标准化后的入站消息（渠道层已把平台差异归一）。 */
 export interface ImInboundMessage {
-  /** 会话标识：群聊 openConversationId / 单聊对方 id。 */
+  /** 会话标识：群聊 openConversationId；私聊为对方稳定 id。 */
   conversationId: string;
   conversationType: "group" | "direct";
   senderId?: string;
   senderName?: string;
+  /** 钉钉 openDingTalkId（私聊回复用 --open-dingtalk-id）。 */
+  senderOpenDingTalkId?: string;
   text: string;
-  /** 群聊消息是否 @ 了机器人（平台未提供该标记时为 undefined，由 Gate 兜底判断）。 */
+  /** 群聊消息是否 @ 了机器人（at-me 监听下恒为 true；平台未提供该标记时为 undefined）。 */
   mentionedBot?: boolean;
   /** 平台原始事件。 */
   raw?: unknown;
 }
 
 export interface ImSendTarget {
-  /** 群聊 openConversationId；私聊为目标用户的 userId。 */
+  /** 群聊 openConversationId；私聊为目标用户的稳定 id。 */
   conversationId: string;
   kind?: "group" | "direct";
-  /** 私聊目标用户 id（钉钉 --user 发送用）。 */
+  /** 私聊目标 userId（钉钉 --user）。 */
   userId?: string;
+  /** 私聊目标 openDingTalkId（钉钉 --open-dingtalk-id，优先）。 */
+  openDingTalkId?: string;
 }
 
 export interface ImChannel {
