@@ -143,6 +143,8 @@ export function createEngine(
   const activeStops = new Set<() => void>();
   const selfIds = new Set<string>();
   const selfNames = new Set<string>();
+  /** 最近处理过的消息 key（messageId 或 会话+发送者+文本），用于多监听去重。 */
+  const recentMessages = new Map<string, number>();
   let disposed = false;
 
   // 代际守卫：Loader 卸载时不保证触发 dispose，旧实例的监督循环会不断复活监听。
@@ -173,6 +175,25 @@ export function createEngine(
       }
     };
     diag(`recv provider=${channel.providerId} conv=${message.conversationId} type=${message.conversationType} sender=${message.senderName ?? message.senderId ?? "?"} at=${String(message.mentionedBot)} text=${message.text.slice(0, 40)}`);
+    // 多监听去重：同一条消息可能从 at-me 与 all-group 两个订阅各投递一次。
+    {
+      const now = Date.now();
+      for (const [k, t] of recentMessages) if (now - t > 10_000) recentMessages.delete(k);
+      const keys: string[] = [];
+      if (message.messageId) keys.push(`id:${message.conversationId}:${message.messageId}`);
+      keys.push(
+        `tx:${message.conversationId}:${message.senderId ?? message.senderName ?? ""}:${message.text.trim().slice(0, 200)}`,
+      );
+      const duplicate = keys.some((k) => {
+        const t = recentMessages.get(k);
+        return t !== undefined && now - t < 5_000;
+      });
+      for (const k of keys) recentMessages.set(k, now);
+      if (duplicate) {
+        diag("duplicate message (multi-listener), skip");
+        return;
+      }
+    }
     try {
       if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
       const target: ImSendTarget =

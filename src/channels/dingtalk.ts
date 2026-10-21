@@ -44,6 +44,7 @@ export function normalizeDingTalkEvent(line: string): ImInboundMessage | null {
   return {
     conversationId,
     conversationType: direct ? "direct" : "group",
+    messageId: str(data.message_id) ?? str(data.messageId) ?? str(data.msg_id),
     senderId:
       str(data.sender_staff_id) ??
       str(data.senderStaffId) ??

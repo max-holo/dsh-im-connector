@@ -4574,7 +4574,7 @@ import { join as join5 } from "node:path";
 
 // src/plugin/engine.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
 
 // src/providers/dingtalk.ts
@@ -4887,6 +4887,7 @@ function normalizeDingTalkEvent(line) {
   return {
     conversationId,
     conversationType: direct ? "direct" : "group",
+    messageId: str(data.message_id) ?? str(data.messageId) ?? str(data.msg_id),
     senderId: str(data.sender_staff_id) ?? str(data.senderStaffId) ?? str(data.sender_id) ?? str(data.sender_open_dingtalk_id) ?? str(data.senderOpenDingTalkId),
     senderName: str(data.sender) ?? str(data.senderNick) ?? str(data.senderName),
     senderOpenDingTalkId: str(data.sender_open_dingtalk_id) ?? str(data.senderOpenDingTalkId) ?? str(data.openDingTalkId),
@@ -4931,10 +4932,10 @@ var DingTalkChannel = class {
       "--yes"
     ]);
   }
-  /** 同时监听「群里 @我」与「私聊」（两个 Stream 连接），任一断开由引擎监督重启。 */
+  /** 同时监听「群里 @我」「私聊」「全部群消息（用于远程指令前缀触发）」，任一断开由引擎监督重启。 */
   async listen(onMessage) {
     const handles = [];
-    for (const kind of ["at-me", "all-direct"]) {
+    for (const kind of ["at-me", "all-direct", "all-group"]) {
       handles.push(
         await this.runner.stream(["event", "+listen-im", "--kind", kind, "--format", "ndjson"], (line) => {
           if (line.startsWith("\0")) return;
@@ -5193,6 +5194,7 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
   const activeStops = /* @__PURE__ */ new Set();
   const selfIds = /* @__PURE__ */ new Set();
   const selfNames = /* @__PURE__ */ new Set();
+  const recentMessages = /* @__PURE__ */ new Map();
   let disposed = false;
   const generation = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const generationFile = join2(dataDirOf(ctx), "engine-generation");
@@ -5209,6 +5211,32 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
   };
   const dispatch = async (channel, message) => {
     if (disposed || !isCurrentGeneration()) return;
+    const diag = (line) => {
+      try {
+        appendFileSync(join2(dataDirOf(ctx), "dispatch.log"), `${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+`);
+      } catch {
+      }
+    };
+    diag(`recv provider=${channel.providerId} conv=${message.conversationId} type=${message.conversationType} sender=${message.senderName ?? message.senderId ?? "?"} at=${String(message.mentionedBot)} text=${message.text.slice(0, 40)}`);
+    {
+      const now = Date.now();
+      for (const [k, t] of recentMessages) if (now - t > 1e4) recentMessages.delete(k);
+      const keys = [];
+      if (message.messageId) keys.push(`id:${message.conversationId}:${message.messageId}`);
+      keys.push(
+        `tx:${message.conversationId}:${message.senderId ?? message.senderName ?? ""}:${message.text.trim().slice(0, 200)}`
+      );
+      const duplicate = keys.some((k) => {
+        const t = recentMessages.get(k);
+        return t !== void 0 && now - t < 5e3;
+      });
+      for (const k of keys) recentMessages.set(k, now);
+      if (duplicate) {
+        diag("duplicate message (multi-listener), skip");
+        return;
+      }
+    }
     try {
       if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
       const target = message.conversationType === "direct" ? {
@@ -5217,8 +5245,25 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
         userId: message.senderId,
         openDingTalkId: message.senderOpenDingTalkId
       } : { conversationId: message.conversationId, kind: "group" };
+      const cmd = opts.command?.();
+      const prefix = cmd?.prefix ?? "AI:";
+      const isSelf = Boolean(message.senderName && selfNames.has(message.senderName));
+      const trimmed = message.text.trim();
+      const body = trimmed.replace(/^(@[^\s]+\s*)+/, "").trim();
+      const selfCommand = message.conversationType === "group" && isSelf && Boolean(cmd?.enabled) && body.startsWith(prefix) && body.slice(prefix.length).trim().length > 0;
+      let promptText = body;
+      if (selfCommand) {
+        promptText = body.slice(prefix.length).trim();
+        diag(`self-command: ${promptText.slice(0, 60)}`);
+      } else {
+        const triggers = opts.triggers?.() ?? { atMe: true };
+        if (message.conversationType === "group" && !triggers.atMe) {
+          diag("at-me trigger disabled, skip");
+          return;
+        }
+      }
       const isApproved = opts.access ? (senderId) => opts.access.isApproved(channel.providerId, senderId) : void 0;
-      if (!gateAllows(message, selfIds, isApproved, selfNames)) {
+      if (!selfCommand && !gateAllows(message, selfIds, isApproved, selfNames, opts.allowSelf?.() ?? false)) {
         if (opts.access && message.conversationType === "direct" && message.senderId && !opts.access.isApproved(channel.providerId, message.senderId)) {
           const first = opts.access.recordPending(channel.providerId, {
             senderId: message.senderId,
@@ -5243,23 +5288,45 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
         store.put(key, sessionId);
         log.info(`[im-connect] new session ${sessionId} for ${key}`);
       }
+      diag(`session=${sessionId}`);
+      const turnsBefore = readTurnOutline(sessionId).length;
       const requestId = `im-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       await ctx.sessionController.resolveAgent(sessionId);
+      diag("resolveAgent ok");
       await ctx.sessionController.prompt(
         {
           requestId,
           sessionId,
           mode: "queue",
-          content: [{ type: "text", text: message.text }]
+          content: [{ type: "text", text: promptText }]
         },
         new AbortController().signal
       );
-      const reply = await collectReply(ctx, sessionId);
+      diag("prompt accepted, waiting for reply");
+      const reply = await obtainReply(
+        ctx,
+        sessionId,
+        turnsBefore,
+        (e) => diag(`collect error: ${e?.message ?? String(e)}`)
+      );
+      diag(`collected ${reply.length} chars: ${reply.slice(0, 80)}`);
       if (reply.trim()) {
+        diag(`sendText start target=${target.kind}:${target.conversationId} len=${reply.length} tail=${JSON.stringify(reply.slice(-40))}`);
         await channel.sendText(target, reply.trim());
+        diag(`sendText ok (group=${target.kind === "group" ? target.conversationId : target.openDingTalkId})`);
         log.info(`[im-connect] replied to ${channel.providerId}:${message.conversationId}`);
+      } else {
+        diag("empty reply, sending notice");
+        try {
+          await channel.sendText(target, "\u3010IM \u8FDE\u63A5\u3011\u672C\u8F6E Agent \u6CA1\u6709\u751F\u6210\u56DE\u590D\uFF08\u53EF\u80FD\u8D85\u65F6\u6216\u4F1A\u8BDD\u5F02\u5E38\uFF09\uFF0C\u8BF7\u91CD\u8BD5\u6216\u68C0\u67E5 DSH \u4F1A\u8BDD\u3002");
+        } catch {
+        }
       }
     } catch (e) {
+      const err = e;
+      diag(
+        `ERROR ${err?.message ?? String(e)}${err?.command ? ` | cmd=${err.command}` : ""}${err?.stderr ? ` | stderr=${err.stderr.slice(0, 300)}` : ""}`
+      );
       log.error(`[im-connect] dispatch failed: ${e?.message ?? String(e)}`);
     }
   };
@@ -5304,10 +5371,9 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
     }
   };
   for (const channel of channels) {
-    if (opts.isEnabled && !opts.isEnabled(channel.providerId)) {
-      log.info(`[im-connect] ${channel.providerId} receive disabled, listener skipped`);
-      continue;
-    }
+    log.info(
+      `[im-connect] ${channel.providerId} listener starting (receive=${opts.isEnabled ? opts.isEnabled(channel.providerId) : true})`
+    );
     void supervise(channel);
   }
   const stop = () => {
@@ -5323,12 +5389,43 @@ function createEngine(ctx, channels = listChannels(), opts = {}) {
   ctx.onDispose?.(stop);
   return stop;
 }
-function gateAllows(message, selfIds, isApproved, selfNames) {
-  if (message.senderId && selfIds.has(message.senderId)) return false;
-  if (selfNames && message.senderName && selfNames.has(message.senderName)) return false;
+function gateAllows(message, selfIds, isApproved, selfNames, allowSelf = false) {
+  if (!allowSelf) {
+    if (message.senderId && selfIds.has(message.senderId)) return false;
+    if (selfNames && message.senderName && selfNames.has(message.senderName)) return false;
+  }
   if (message.conversationType === "group") return message.mentionedBot === true;
   if (!message.senderId) return false;
   return isApproved ? isApproved(message.senderId) : true;
+}
+function readTurnOutline(sessionId) {
+  try {
+    const home = process.env.USERPROFILE ?? process.env.HOME ?? "";
+    if (!home) return [];
+    const file = join2(home, ".dsh", "storages", "session_projcache", "sessions", `${sessionId}.json`);
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    return raw?.record?.rows?.turnOutline?.val?.turns ?? [];
+  } catch {
+    return [];
+  }
+}
+async function obtainReply(ctx, sessionId, turnsBefore, onStreamError, timeoutMs = 15e4) {
+  const streamPromise = collectReply(ctx, sessionId, onStreamError).then((t) => t.trim()).catch(() => "");
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const turns = readTurnOutline(sessionId);
+    if (turns.length > turnsBefore) {
+      const last = turns[turns.length - 1];
+      if (typeof last?.response === "string" && last.response.trim()) return last.response.trim();
+    }
+    const streamed = await Promise.race([
+      streamPromise,
+      new Promise((resolve) => setTimeout(() => resolve(""), 1500))
+    ]);
+    if (streamed) return streamed;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return "";
 }
 async function runSelfTest(ctx) {
   const started = Date.now();
@@ -5351,29 +5448,53 @@ async function runSelfTest(ctx) {
     return { ok: false, error: e?.message ?? String(e), elapsedMs: Date.now() - started };
   }
 }
-async function collectReply(ctx, sessionId) {
+async function collectReply(ctx, sessionId, onError, opts = {}) {
+  const idleMs = opts.idleMs ?? 2500;
+  const maxMs = opts.maxMs ?? 18e4;
   const ac = new AbortController();
   const parts = [];
-  try {
-    const frames = ctx.sessionController.follow(
-      { address: { kind: "session", sessionId }, assistantStream: true },
-      ac.signal
-    );
-    for await (const frame of frames) {
-      if (frame.type !== "assistant-stream") continue;
-      const f = frame.frame;
-      if (f.type === "chunk") {
-        const c = f.chunk;
+  const queue = [];
+  let finished = false;
+  let sawEnd = false;
+  let lastActivity = Date.now();
+  const startedAt = Date.now();
+  void (async () => {
+    try {
+      const frames = ctx.sessionController.follow(
+        { address: { kind: "session", sessionId }, assistantStream: true },
+        ac.signal
+      );
+      for await (const frame of frames) {
+        if (frame.type !== "assistant-stream") continue;
+        queue.push(frame.frame);
+      }
+    } catch (e) {
+      onError?.(e);
+    } finally {
+      finished = true;
+    }
+  })();
+  while (Date.now() - startedAt < maxMs) {
+    const frame = queue.shift();
+    if (frame) {
+      lastActivity = Date.now();
+      if (frame.type === "chunk") {
+        const c = frame.chunk;
         if (c && typeof c === "object" && c.type === "text-delta" && typeof c.text === "string") {
           parts.push(c.text);
         }
-      } else if (f.type === "end") {
-        ac.abort();
-        break;
+      } else if (frame.type === "end") {
+        sawEnd = true;
+      } else if (frame.type === "start") {
+        sawEnd = false;
       }
+      continue;
     }
-  } catch {
+    if (finished) break;
+    if (sawEnd && Date.now() - lastActivity > idleMs) break;
+    await new Promise((r) => setTimeout(r, Math.min(100, Math.max(10, Math.floor(idleMs / 2)))));
   }
+  ac.abort();
   return parts.join("");
 }
 
@@ -5385,7 +5506,10 @@ var DEFAULTS = {
     dingtalk: { receive: true },
     wecom: { receive: false }
   },
-  whitelist: {}
+  whitelist: {},
+  debug: { allowSelf: false },
+  command: { enabled: true, prefix: "AI:" },
+  triggers: { atMe: true }
 };
 var PENDING_LIMIT = 50;
 function resolveDataDir() {
@@ -5465,17 +5589,49 @@ var JsonConfigStore = class {
   listWhitelist(providerId) {
     return [...this.load().whitelist[providerId] ?? []];
   }
+  /** 调试开关：是否允许处理自己发送的消息（自测用）。 */
+  getAllowSelf() {
+    return Boolean(this.load().debug?.allowSelf);
+  }
+  /** 远程指令配置：enabled + prefix。 */
+  getCommand() {
+    const c = this.load().command;
+    return { enabled: c?.enabled ?? true, prefix: c?.prefix || "AI:" };
+  }
+  setCommand(patch) {
+    const data = this.load();
+    data.command = {
+      enabled: patch.enabled ?? data.command?.enabled ?? true,
+      prefix: patch.prefix || data.command?.prefix || "AI:"
+    };
+    this.save(data);
+  }
+  /** 触发方式配置：群聊 @我 代答。 */
+  getTriggers() {
+    return { atMe: this.load().triggers?.atMe ?? true };
+  }
+  setTriggers(patch) {
+    const data = this.load();
+    data.triggers = { atMe: patch.atMe ?? data.triggers?.atMe ?? true };
+    this.save(data);
+  }
   load() {
     try {
       const loaded = JSON.parse(readFileSync2(this.file, "utf8"));
       return {
         providers: { ...DEFAULTS.providers, ...loaded.providers ?? {} },
-        whitelist: loaded.whitelist ?? {}
+        whitelist: loaded.whitelist ?? {},
+        debug: { ...DEFAULTS.debug, ...loaded.debug ?? {} },
+        command: { ...DEFAULTS.command, ...loaded.command ?? {} },
+        triggers: { ...DEFAULTS.triggers, ...loaded.triggers ?? {} }
       };
     } catch {
       return {
         providers: { ...DEFAULTS.providers },
-        whitelist: {}
+        whitelist: {},
+        debug: { ...DEFAULTS.debug },
+        command: { ...DEFAULTS.command },
+        triggers: { ...DEFAULTS.triggers }
       };
     }
   }
@@ -5515,6 +5671,8 @@ var ImConnectHost = class {
   config;
   login = { state: "idle", output: "", startedAt: 0 };
   loginChild;
+  /** 连接状态缓存（provider → 上次探测结果），避免每次 /state 都 spawn CLI。 */
+  statusCache = /* @__PURE__ */ new Map();
   constructor(config) {
     this.config = config;
   }
@@ -5558,24 +5716,32 @@ var ImConnectHost = class {
     }
     return { ...this.login };
   }
-  /** 聚合各渠道的接收开关、连接状态、账号、待批准与能力健康度。 */
+  /** 聚合各渠道的接收开关、连接状态、账号、待批准、能力健康度与远程指令配置。 */
   async collectState() {
     const providers = [];
     const pending = [];
     for (const channel of listChannels()) {
-      let connected = false;
+      const cached = this.statusCache.get(channel.providerId);
+      let connected;
       let account;
-      try {
-        const status = await channel.status();
-        if (typeof status === "string") {
-          connected = status.trim() === "authorized";
-          account = connected ? "\u5DF2\u6388\u6743" : void 0;
-        } else if (status && typeof status === "object") {
-          connected = Boolean(status.authenticated ?? status.token_valid);
-          if (status.user_name) account = status.corp_name ? `${status.user_name} @ ${status.corp_name}` : status.user_name;
+      if (cached && Date.now() - cached.at < 15e3) {
+        ({ connected, account } = cached.value);
+      } else {
+        try {
+          const status = await channel.status();
+          if (typeof status === "string") {
+            connected = status.trim() === "authorized";
+            account = connected ? "\u5DF2\u6388\u6743" : void 0;
+          } else if (status && typeof status === "object") {
+            connected = Boolean(status.authenticated ?? status.token_valid);
+            if (status.user_name) account = status.corp_name ? `${status.user_name} @ ${status.corp_name}` : status.user_name;
+          } else {
+            connected = false;
+          }
+        } catch {
+          connected = false;
         }
-      } catch {
-        connected = false;
+        this.statusCache.set(channel.providerId, { at: Date.now(), value: { connected, account } });
       }
       providers.push({
         id: channel.providerId,
@@ -5597,7 +5763,12 @@ var ImConnectHost = class {
       }
     }
     pending.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
-    return { providers, pending };
+    return {
+      providers,
+      pending,
+      command: this.config.getCommand(),
+      triggers: this.config.getTriggers()
+    };
   }
   /** 当前登录二维码 PNG：climp 写的文件优先，其次用提取到的 URL 现场生成。 */
   async qrImage() {
@@ -5726,6 +5897,29 @@ function registerRoutes(ctx, host, selfTest) {
       host.config.approve(String(body.provider ?? ""), String(body.senderId ?? ""), Boolean(body.approved))
     );
   });
+  register(`${BASE}/command`, async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    const body = await readBody(req);
+    host.config.setCommand({
+      enabled: typeof body.enabled === "boolean" ? body.enabled : void 0,
+      prefix: typeof body.prefix === "string" && body.prefix.trim() ? body.prefix.trim() : void 0
+    });
+    sendJson(res, 200, { ok: true, command: host.config.getCommand() });
+  });
+  register(`${BASE}/triggers`, async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    const body = await readBody(req);
+    host.config.setTriggers({
+      atMe: typeof body.atMe === "boolean" ? body.atMe : void 0
+    });
+    sendJson(res, 200, { ok: true, triggers: host.config.getTriggers() });
+  });
   register(`${BASE}/selftest`, async (req, res) => {
     if (req.method !== "POST") {
       sendJson(res, 405, { ok: false, error: "POST only" });
@@ -5770,6 +5964,9 @@ function apply(ctx) {
   };
   const stopEngine = createEngine(engineCtx, void 0, {
     isEnabled: (providerId) => config.getReceive(providerId),
+    allowSelf: () => config.getAllowSelf(),
+    command: () => config.getCommand(),
+    triggers: () => config.getTriggers(),
     access: {
       isApproved: (providerId, senderId) => config.isApproved(providerId, senderId),
       recordPending: (providerId, message) => config.recordPending(providerId, message),

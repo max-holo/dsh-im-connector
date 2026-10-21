@@ -116,7 +116,8 @@ function buildMessage(triggerStr) {
         .replaceAll("{name}", p.name),
     );
   }
-  return { block, markdown: lines.join("\n\n"), title: cfg.message.title, atIds };
+  const heading = `**${cfg.message.title}**`;
+  return { block, markdown: [heading, ...lines].join("\n\n"), title: cfg.message.title, atIds };
 }
 
 // ---------- dws 调用 ----------

@@ -8,6 +8,8 @@ export interface ImInboundMessage {
   /** 会话标识：群聊 openConversationId；私聊为对方稳定 id。 */
   conversationId: string;
   conversationType: "group" | "direct";
+  /** 平台消息 id（用于多监听去重）。 */
+  messageId?: string;
   senderId?: string;
   senderName?: string;
   /** 钉钉 openDingTalkId（私聊回复用 --open-dingtalk-id）。 */
