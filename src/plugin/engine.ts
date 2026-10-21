@@ -307,12 +307,14 @@ export function createEngine(
     }
   };
 
-  // 启动各渠道监听（含监督重启）
+  // 启动各渠道监听（含监督重启）。监听常驻，接收开关只在派发层生效——
+  // 这样开关两个方向都能立即生效，不需要重启插件/DSH。
   for (const channel of channels) {
-    if (opts.isEnabled && !opts.isEnabled(channel.providerId)) {
-      log.info(`[im-connect] ${channel.providerId} receive disabled, listener skipped`);
-      continue;
-    }
+    log.info(
+      `[im-connect] ${channel.providerId} listener starting (receive=${
+        opts.isEnabled ? opts.isEnabled(channel.providerId) : true
+      })`,
+    );
     void supervise(channel);
   }
 
