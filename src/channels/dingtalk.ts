@@ -72,7 +72,7 @@ export class DingTalkChannel implements ImChannel {
     ]);
   }
 
-  async listen(onMessage: (m: ImInboundMessage) => void): Promise<{ stop: () => void }> {
+  async listen(onMessage: (m: ImInboundMessage) => void): Promise<{ stop: () => void; done: Promise<void> }> {
     return this.runner.stream(
       ["event", "+listen-im", "--kind", "all-group", "--format", "ndjson"],
       (line) => {

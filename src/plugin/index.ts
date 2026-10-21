@@ -23,6 +23,11 @@ export function apply(ctx: {
   };
   const stopEngine = createEngine(engineCtx, undefined, {
     isEnabled: (providerId) => config.getReceive(providerId),
+    access: {
+      isApproved: (providerId, senderId) => config.isApproved(providerId, senderId),
+      recordPending: (providerId, message) => config.recordPending(providerId, message),
+      markNotified: (providerId, senderId) => config.markNotified(providerId, senderId),
+    },
   });
   const stopRoutes = registerRoutes(
     { webServer: ctx.webServer as never, connection: ctx.connection as never },

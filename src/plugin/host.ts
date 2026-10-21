@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import QRCode from "qrcode";
 import { listChannels } from "../channels/registry.js";
 import type { ImChannel } from "../channels/types.js";
 import type { JsonConfigStore } from "./config.js";
@@ -16,12 +17,27 @@ export interface LoginState {
   output: string;
   done: boolean;
   exitCode: number | null;
+  /** 从登录输出中提取的授权 URL（用于渲染二维码图片）。 */
+  url?: string;
+  startedAt: number;
+}
+
+/** 从终端输出提取第一个授权链接。 */
+export function extractLoginUrl(output: string): string | undefined {
+  const m = output.match(/https?:\/\/[^\s"'<>)\]]+/);
+  return m ? m[0] : undefined;
 }
 
 /** Host 侧管理面：扫码登录进程 + 状态聚合。 */
 export class ImConnectHost {
   readonly config: JsonConfigStore;
-  private login: LoginState = { running: false, output: "", done: true, exitCode: null };
+  private login: LoginState = {
+    running: false,
+    output: "",
+    done: true,
+    exitCode: null,
+    startedAt: 0,
+  };
 
   constructor(config: JsonConfigStore) {
     this.config = config;
@@ -31,7 +47,7 @@ export class ImConnectHost {
     const cmd = LOGIN_COMMANDS[provider];
     if (!cmd) return { ok: false, error: `unknown provider: ${provider}` };
     if (this.login.running) return { ok: false, error: "a login is already running" };
-    this.login = { running: true, provider, output: "", done: false, exitCode: null };
+    this.login = { running: true, provider, output: "", done: false, exitCode: null, startedAt: Date.now() };
     const child = spawn(cmd.bin, cmd.args, {
       shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
@@ -42,6 +58,7 @@ export class ImConnectHost {
       if (this.login.output.length > 20000) {
         this.login.output = this.login.output.slice(-20000);
       }
+      if (!this.login.url) this.login.url = extractLoginUrl(this.login.output);
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
@@ -57,11 +74,20 @@ export class ImConnectHost {
     return { ...this.login };
   }
 
-  /** 聚合各渠道的接收开关与连接状态。 */
+  /** 聚合各渠道的接收开关、连接状态、待批准与白名单。 */
   async collectState(): Promise<{
     providers: Array<{ id: string; displayName: string; receive: boolean; connected: boolean }>;
+    pending: Array<{
+      provider: string;
+      senderId: string;
+      senderName?: string;
+      lastText: string;
+      firstSeenAt: number;
+      lastSeenAt: number;
+    }>;
   }> {
     const providers = [];
+    const pending = [];
     for (const channel of listChannels()) {
       let connected = false;
       try {
@@ -75,8 +101,29 @@ export class ImConnectHost {
         receive: this.config.getReceive(channel.providerId),
         connected,
       });
+      for (const p of this.config.listPending(channel.providerId)) {
+        pending.push({
+          provider: channel.providerId,
+          senderId: p.senderId,
+          senderName: p.senderName,
+          lastText: p.lastText,
+          firstSeenAt: p.firstSeenAt,
+          lastSeenAt: p.lastSeenAt,
+        });
+      }
     }
-    return { providers };
+    pending.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+    return { providers, pending };
+  }
+
+  /** 当前登录授权 URL 的二维码 PNG（无登录时 null）。 */
+  async qrImage(): Promise<Buffer | null> {
+    if (!this.login.url) return null;
+    try {
+      return await QRCode.toBuffer(this.login.url, { width: 264, margin: 2 });
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -126,7 +173,8 @@ interface ConnectionLike {
 
 /**
  * 注册管理 HTTP 路由（与 Web GUI 同源，浏览器 fetch 相对路径即可）：
- * GET /im-connect/state、POST /im-connect/receive、POST /im-connect/login、GET /im-connect/login-status。
+ * GET /im-connect/api/state、POST /im-connect/api/receive、POST /im-connect/api/login、
+ * GET /im-connect/api/login-status、GET /im-connect/api/qr.png、POST /im-connect/api/approve。
  * 全部经 connection.requestRejection 鉴权（未授权 401/403）。
  * 返回清理函数：插件卸载时注销全部路由。
  */
@@ -134,6 +182,7 @@ export function registerRoutes(
   ctx: { webServer: WebServerLike; connection: ConnectionLike },
   host: ImConnectHost,
 ): () => void {
+  const BASE = "/im-connect/api";
   const disposers: Array<() => void> = [];
   const register = (
     path: string,
@@ -166,11 +215,11 @@ export function registerRoutes(
     return true;
   };
 
-  register("/im-connect/state", async (req, res) => {
+  register(`${BASE}/state`, async (req, res) => {
     sendJson(res, 200, await host.collectState());
   });
 
-  register("/im-connect/receive", async (req, res) => {
+  register(`${BASE}/receive`, async (req, res) => {
     if (req.method !== "POST") {
       sendJson(res, 405, { ok: false, error: "POST only" });
       return;
@@ -180,7 +229,7 @@ export function registerRoutes(
     sendJson(res, 200, { ok: true });
   });
 
-  register("/im-connect/login", async (req, res) => {
+  register(`${BASE}/login`, async (req, res) => {
     if (req.method !== "POST") {
       sendJson(res, 405, { ok: false, error: "POST only" });
       return;
@@ -189,8 +238,32 @@ export function registerRoutes(
     sendJson(res, 200, host.startLogin(String(body.provider ?? "")));
   });
 
-  register("/im-connect/login-status", (req, res) => {
+  register(`${BASE}/login-status`, (req, res) => {
     sendJson(res, 200, host.getLoginStatus());
+  });
+
+  register(`${BASE}/qr.png`, async (req, res) => {
+    const png = await host.qrImage();
+    if (!png) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
+    res.end(png);
+  });
+
+  register(`${BASE}/approve`, async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    const body = await readBody(req);
+    sendJson(
+      res,
+      200,
+      host.config.approve(String(body.provider ?? ""), String(body.senderId ?? ""), Boolean(body.approved)),
+    );
   });
 
   return () => {

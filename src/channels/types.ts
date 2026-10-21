@@ -25,8 +25,11 @@ export interface ImChannel {
   providerId: string;
   /** 向会话发送文本回复。 */
   sendText(target: ImSendTarget, text: string): Promise<unknown>;
-  /** 建立入站监听；每条消息回调一次。返回停止句柄。 */
-  listen(onMessage: (m: ImInboundMessage) => void): Promise<{ stop: () => void }>;
+  /**
+   * 建立入站监听；每条消息回调一次。
+   * done 在监听终止（退出或 stop）时 resolve，供引擎做监督重启。
+   */
+  listen(onMessage: (m: ImInboundMessage) => void): Promise<{ stop: () => void; done: Promise<void> }>;
   /** 连接/登录状态。 */
   status(): Promise<unknown>;
 }

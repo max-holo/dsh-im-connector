@@ -98,12 +98,20 @@ describe("channels (fake CLI)", () => {
     }
   });
 
-  it("wecom listen returns an explicit no-op boundary (no push in wecom-cli)", async () => {
-    const ch = new WeComChannel(wRunner());
-    const handle = await ch.listen(() => {
-      throw new Error("should not be called");
-    });
-    expect(typeof handle.stop).toBe("function");
+  it("wecom listen polls groups+messages and emits deduped messages", async () => {
+    process.env.FAKE_CLI_WECOM = "1";
+    try {
+      const ch = new WeComChannel(wRunner());
+      const events: ImInboundMessage[] = [];
+      const handle = await ch.listen((m) => events.push(m), { intervalMs: 60, overlapMs: 0 });
+      await new Promise((r) => setTimeout(r, 700));
+      handle.stop();
+      expect(events.length).toBe(2); // m1 + m2，去重后每轮不再重复
+      expect(events[0]).toMatchObject({ conversationId: "g1", text: "你好", senderName: "张三" });
+      expect(events[1]).toMatchObject({ conversationId: "g1", text: "在吗", senderName: "李四" });
+    } finally {
+      delete process.env.FAKE_CLI_WECOM;
+    }
   });
 
   it("normalizeDingTalkEvent parses envelopes and skips non-messages", () => {

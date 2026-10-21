@@ -18,7 +18,29 @@ if (process.env.FAKE_CLI_ERROR === "1") {
   process.exit(3);
 }
 
-if (process.env.FAKE_CLI_STREAM === "1") {
+if (process.env.FAKE_CLI_WECOM === "1") {
+  // 模拟 wecom-cli：groups / messages 返回不同负载（results_json 包裹）
+  if (args.includes("groups")) {
+    process.stdout.write(
+      JSON.stringify({ results_json: { data: { items: [{ chat_id: "g1", chat_name: "测试群" }] } } }),
+    );
+  } else if (args.includes("messages")) {
+    process.stdout.write(
+      JSON.stringify({
+        results_json: {
+          data: {
+            items: [
+              { msg_id: "m1", chat_id: "g1", sender_name: "张三", text: { content: "你好" } },
+              { msg_id: "m2", chat_id: "g1", sender_name: "李四", text: { content: "在吗" } },
+            ],
+          },
+        },
+      }),
+    );
+  } else {
+    process.stdout.write(JSON.stringify({ results_json: { data: { items: [] } } }));
+  }
+} else if (process.env.FAKE_CLI_STREAM === "1") {
   process.stdout.write(
     JSON.stringify({
       type: "event",

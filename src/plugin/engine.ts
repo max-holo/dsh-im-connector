@@ -80,14 +80,31 @@ function dataFile(ctx: EngineContext): string {
  * Dispatcher（resolveAgent → prompt → follow 收集回复 → 渠道回发）。
  * 渠道只收发；引擎不写死任何平台名。
  */
+export interface EngineOptions {
+  /** 平台级接收开关。 */
+  isEnabled?: (providerId: string) => boolean;
+  /** 私聊准入：白名单判定 + 待批准登记。 */
+  access?: {
+    isApproved(providerId: string, senderId: string): boolean;
+    /** 返回是否首次出现（用于一次性提示）。 */
+    recordPending(
+      providerId: string,
+      message: { senderId: string; senderName?: string; text: string },
+    ): boolean;
+    markNotified(providerId: string, senderId: string): void;
+  };
+}
+
+const PENDING_NOTICE = "【IM 连接】你的消息已进入待批准列表，管理员批准后即可与本机助手对话。";
+
 export function createEngine(
   ctx: EngineContext,
   channels: ImChannel[] = listChannels(),
-  opts: { isEnabled?: (providerId: string) => boolean } = {},
+  opts: EngineOptions = {},
 ): () => void {
   const log = ctx.logger ?? { info: () => {}, warn: () => {}, error: () => {} };
   const store = new JsonSessionMap(dataFile(ctx));
-  const stops: Array<() => void> = [];
+  const activeStops = new Set<() => void>();
   const selfIds = new Set<string>();
   let disposed = false;
 
@@ -95,7 +112,33 @@ export function createEngine(
     if (disposed) return;
     try {
       if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
-      if (!gateAllows(message, selfIds)) return;
+      const isApproved = opts.access
+        ? (senderId: string) => opts.access!.isApproved(channel.providerId, senderId)
+        : undefined;
+      if (!gateAllows(message, selfIds, isApproved)) {
+        // 未批准的私聊：登记待批准，首次发一次性提示。
+        if (
+          opts.access &&
+          message.conversationType === "direct" &&
+          message.senderId &&
+          !opts.access.isApproved(channel.providerId, message.senderId)
+        ) {
+          const first = opts.access.recordPending(channel.providerId, {
+            senderId: message.senderId as string,
+            senderName: message.senderName,
+            text: message.text,
+          });
+          if (first) {
+            opts.access.markNotified(channel.providerId, message.senderId);
+            try {
+              await channel.sendText({ conversationId: message.conversationId }, PENDING_NOTICE);
+            } catch {
+              /* 提示失败不阻断 */
+            }
+          }
+        }
+        return;
+      }
       const key = `${channel.providerId}:${message.conversationId}`;
       let sessionId = store.get(key);
       if (!sessionId) {
@@ -126,19 +169,22 @@ export function createEngine(
     }
   };
 
-  // 启动各渠道监听
-  void (async () => {
-    for (const channel of channels) {
-      if (opts.isEnabled && !opts.isEnabled(channel.providerId)) {
-        log.info(`[im-connect] ${channel.providerId} receive disabled, listener skipped`);
-        continue;
-      }
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  /**
+   * 渠道监听监督：listen 意外退出（进程被杀/断连）后按退避重启，
+   * 保证 Host 重启或监听进程崩溃后能自愈。
+   */
+  const supervise = async (channel: ImChannel): Promise<void> => {
+    let backoff = 5_000;
+    while (!disposed) {
+      let handle: { stop: () => void; done: Promise<void> } | undefined;
       try {
-        const handle = await channel.listen((m) => {
+        log.info(`[im-connect] ${channel.providerId} listener starting`);
+        handle = await channel.listen((m) => {
           void dispatch(channel, m);
         });
-        stops.push(handle.stop);
-        log.info(`[im-connect] ${channel.providerId} listener started`);
+        activeStops.add(handle.stop);
         // 解析“自己”的身份，防止把自己发出的回复当新消息形成回环
         try {
           const status = (await channel.status()) as {
@@ -150,15 +196,30 @@ export function createEngine(
         } catch {
           /* 身份解析失败不影响监听 */
         }
+        await handle.done;
       } catch (e) {
         log.warn(`[im-connect] ${channel.providerId} listen failed: ${String(e)}`);
       }
+      if (handle) activeStops.delete(handle.stop);
+      if (disposed) break;
+      log.warn(`[im-connect] ${channel.providerId} listener ended, restarting in ${backoff}ms`);
+      await sleep(backoff);
+      backoff = Math.min(backoff * 2, 60_000);
     }
-  })();
+  };
+
+  // 启动各渠道监听（含监督重启）
+  for (const channel of channels) {
+    if (opts.isEnabled && !opts.isEnabled(channel.providerId)) {
+      log.info(`[im-connect] ${channel.providerId} receive disabled, listener skipped`);
+      continue;
+    }
+    void supervise(channel);
+  }
 
   const stop = (): void => {
     disposed = true;
-    for (const s of stops) {
+    for (const s of [...activeStops]) {
       try {
         s();
       } catch {
@@ -170,11 +231,16 @@ export function createEngine(
   return stop;
 }
 
-/** 准入：群聊必须显式 @ 机器人；跳过自己发送的消息（防回环）。 */
-export function gateAllows(message: ImInboundMessage, selfIds: ReadonlySet<string>): boolean {
+/** 准入：跳过自己；群聊必须显式 @ 机器人；私聊需在白名单（未配置白名单则放行）。 */
+export function gateAllows(
+  message: ImInboundMessage,
+  selfIds: ReadonlySet<string>,
+  isApproved?: (senderId: string) => boolean,
+): boolean {
   if (message.senderId && selfIds.has(message.senderId)) return false;
   if (message.conversationType === "group") return message.mentionedBot === true;
-  return true; // 私聊：P2 先放行，白名单在 P3
+  if (!message.senderId) return false;
+  return isApproved ? isApproved(message.senderId) : true;
 }
 
 /** 跟随会话流收集本轮回复文本（text-delta 拼接，end 即止）。 */

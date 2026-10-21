@@ -119,14 +119,14 @@ export class CliRunner {
 
   /**
    * 以 NDJSON 流式执行（长连接监听用）。逐行把 stdout 内容交给 onLine；
-   * 返回 { stop() } 优雅停止（SIGTERM + 关闭 stdin）。
+   * 返回 { stop(), done } —— stop 优雅停止（Windows 整树终止），done 在进程退出或 stop 后 resolve。
    * 不追加任何 format 参数，调用方自行传入（如 dws 的 --format ndjson）。
    */
   async stream(
     args: string[],
     onLine: (line: string) => void,
     opts?: CliRunOptions,
-  ): Promise<{ stop: () => void }> {
+  ): Promise<{ stop: () => void; done: Promise<void> }> {
     const spec = await this.launch(opts?.bin);
     const child = spawn(spec.command, [...spec.prefix, ...args], {
       shell: spec.shell,
@@ -134,6 +134,10 @@ export class CliRunner {
       env: { ...process.env, ...opts?.env },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+    });
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => {
+      resolveDone = r;
     });
     let buffer = "";
     let stderrBuf = "";
@@ -153,6 +157,7 @@ export class CliRunner {
       if (code !== 0 && code !== null && stderrBuf.trim()) {
         onLine(`\u0000stderr:${stderrBuf.trim()}`);
       }
+      resolveDone();
     });
     if (opts?.signal) {
       opts.signal.addEventListener(
@@ -180,7 +185,9 @@ export class CliRunner {
         } catch {
           /* ignore */
         }
+        resolveDone();
       },
+      done,
     };
   }
 

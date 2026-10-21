@@ -34,6 +34,7 @@ describe("engine (mock ctx + stub channel)", () => {
     inbound = undefined;
     created = 0;
     prompts = [];
+    let resolveDone: () => void = () => {};
     channel = {
       providerId: "test",
       async sendText(target: ImSendTarget, text: string) {
@@ -42,7 +43,14 @@ describe("engine (mock ctx + stub channel)", () => {
       },
       async listen(onMessage: (m: ImInboundMessage) => void) {
         inbound = onMessage;
-        return { stop: () => (stopped = true) };
+        const done = new Promise<void>((r) => (resolveDone = r));
+        return {
+          stop: () => {
+            stopped = true;
+            resolveDone();
+          },
+          done,
+        };
       },
       async status() {
         return { user_id: "self-1" };
@@ -131,5 +139,46 @@ describe("engine (mock ctx + stub channel)", () => {
     expect(created).toBe(2);
     expect(prompts).toEqual(["s-1", "s-2"]);
     stop();
+  });
+
+  it("access control: unapproved direct goes to pending with one-time notice; approved proceeds", async () => {
+    fresh();
+    const pending: string[] = [];
+    const access = {
+      isApproved: (_p: string, sid: string) => sid === "approved-user",
+      recordPending: (_p: string, m: { senderId: string }) => {
+        pending.push(m.senderId);
+        return true;
+      },
+      markNotified: () => {},
+    };
+    const stop = createEngine(ctx, [channel], { access });
+    await tick();
+    // 未批准：进待批准 + 一次性提示，不派发
+    inbound!({ conversationId: "d1", conversationType: "direct", senderId: "stranger", text: "在吗" });
+    await tick(50);
+    expect(pending).toEqual(["stranger"]);
+    expect(sent.length).toBe(1);
+    expect(prompts).toHaveLength(0);
+    // 已批准：正常派发
+    inbound!({ conversationId: "d2", conversationType: "direct", senderId: "approved-user", text: "帮我" });
+    await tick(50);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toBe("s-1");
+    stop();
+  });
+
+  it("gateAllows honors the approval callback", () => {
+    const self = new Set<string>();
+    const approved = (sid: string) => sid === "ok";
+    expect(
+      gateAllows({ conversationId: "d1", conversationType: "direct", senderId: "nobody", text: "x" }, self, approved),
+    ).toBe(false);
+    expect(
+      gateAllows({ conversationId: "d1", conversationType: "direct", senderId: "ok", text: "x" }, self, approved),
+    ).toBe(true);
+    expect(
+      gateAllows({ conversationId: "d1", conversationType: "direct", text: "x" }, self, approved),
+    ).toBe(false); // 缺少发送者身份拒绝
   });
 });
