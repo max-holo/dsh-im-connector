@@ -42,17 +42,18 @@ if (process.env.FAKE_CLI_WECOM === "1") {
   }
 } else if (process.env.FAKE_CLI_STREAM === "1") {
   const isDirect = args.includes("all-direct");
+  const isAllGroup = args.includes("all-group");
   process.stdout.write(
     JSON.stringify({
       type: "event",
       data: {
-        conversationId: isDirect ? "cid-d" : "cid-9",
+        conversationId: isDirect ? "cid-d" : isAllGroup ? "cid-g" : "cid-9",
         conversationType: isDirect ? "1" : "2",
         senderStaffId: "u1",
         senderNick: "张三",
         msgtype: "text",
-        text: { content: isDirect ? "私聊你好" : "帮我查下日程" },
-        isAtBot: !isDirect,
+        text: { content: isDirect ? "私聊你好" : isAllGroup ? "群里普通消息" : "帮我查下日程" },
+        isAtBot: !isDirect && !isAllGroup,
       },
     }) + "\n",
   );

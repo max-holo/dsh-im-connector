@@ -39,6 +39,7 @@ export function apply(ctx: {
   const stopEngine = createEngine(engineCtx, undefined, {
     isEnabled: (providerId) => config.getReceive(providerId),
     allowSelf: () => config.getAllowSelf(),
+    command: () => config.getCommand(),
     access: {
       isApproved: (providerId, senderId) => config.isApproved(providerId, senderId),
       recordPending: (providerId, message) => config.recordPending(providerId, message),

@@ -104,7 +104,7 @@ export class ImConnectHost {
     return { ...this.login };
   }
 
-  /** 聚合各渠道的接收开关、连接状态、账号、待批准与能力健康度。 */
+  /** 聚合各渠道的接收开关、连接状态、账号、待批准、能力健康度与远程指令配置。 */
   async collectState(): Promise<{
     providers: Array<{
       id: string;
@@ -122,6 +122,7 @@ export class ImConnectHost {
       firstSeenAt: number;
       lastSeenAt: number;
     }>;
+    command: { enabled: boolean; prefix: string };
   }> {
     const providers = [];
     const pending = [];
@@ -183,7 +184,7 @@ export class ImConnectHost {
       }
     }
     pending.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
-    return { providers, pending };
+    return { providers, pending, command: this.config.getCommand() };
   }
 
   /** 当前登录二维码 PNG：climp 写的文件优先，其次用提取到的 URL 现场生成。 */
@@ -362,6 +363,19 @@ export function registerRoutes(
       200,
       host.config.approve(String(body.provider ?? ""), String(body.senderId ?? ""), Boolean(body.approved)),
     );
+  });
+
+  register(`${BASE}/command`, async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    const body = await readBody(req);
+    host.config.setCommand({
+      enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+      prefix: typeof body.prefix === "string" && body.prefix.trim() ? body.prefix.trim() : undefined,
+    });
+    sendJson(res, 200, { ok: true, command: host.config.getCommand() });
   });
 
   register(`${BASE}/selftest`, async (req, res) => {

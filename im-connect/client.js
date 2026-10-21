@@ -43,6 +43,7 @@ window.__ModuleLoader__.load({
       }),
       btn: { padding: '6px 14px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 13, lineHeight: '18px', whiteSpace: 'nowrap' },
       btnPrimary: { padding: '6px 14px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '18px', whiteSpace: 'nowrap' },
+      input: { padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, fontSize: 13, width: 120, outline: 'none', lineHeight: '18px' },
       panel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, paddingTop: 12, borderTop: `1px dashed ${C.border}`, marginTop: 2 },
       qr: { width: 220, height: 220, display: 'block', borderRadius: 10, background: '#fff' },
       hint: { fontSize: 12, color: C.sub, margin: 0, wordBreak: 'break-all', textAlign: 'center', lineHeight: 1.5 },
@@ -162,6 +163,60 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function CommandCard({ command, onChanged }) {
+      const [prefix, setPrefix] = useState(command.prefix);
+      const [busy, setBusy] = useState(false);
+      useEffect(() => { setPrefix(command.prefix); }, [command.prefix]);
+
+      const post = async (body) => {
+        setBusy(true);
+        try {
+          await fetch('/im-connect/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          onChanged();
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      return h('div', { style: s.card },
+        h('p', { style: s.sectionTitle }, '远程指令'),
+        h('p', { style: s.desc }, '在任意群里发送「前缀 + 指令」即可让本机 DSH 执行并回复（仅你的账号能触发，无需 @ 任何人）。'),
+        h('div', { style: s.row },
+          h('div', { style: s.rowMain },
+            h('span', { style: s.name }, '启用'),
+            h('span', { style: s.account }, '示例：' + (command.prefix || 'AI:') + ' 帮我看下今天的日程'),
+          ),
+          h('div', { style: s.rowSide }, h(Switch, {
+            on: command.enabled,
+            busy,
+            onToggle: (next) => post({ enabled: next }),
+            label: '远程指令开关',
+          })),
+        ),
+        h('div', { style: s.row },
+          h('div', { style: s.rowMain },
+            h('span', { style: s.account }, '指令前缀'),
+            h('input', {
+              style: s.input,
+              value: prefix,
+              onChange: (e) => setPrefix(e.target.value),
+              placeholder: 'AI:',
+              'aria-label': '指令前缀',
+            }),
+          ),
+          h('div', { style: s.rowSide }, h('button', {
+            style: s.btn,
+            onClick: () => { if (prefix.trim()) post({ prefix: prefix.trim() }); },
+            disabled: busy || !prefix.trim(),
+          }, '保存')),
+        ),
+      );
+    }
+
     function ImConnectSettings() {
       const [state, setState] = useState({ providers: [], pending: [] });
       const [login, setLogin] = useState(null);
@@ -218,6 +273,9 @@ window.__ModuleLoader__.load({
                 onCloseLogin: closeLogin,
               })),
         ),
+        state.command
+          ? h(CommandCard, { command: state.command, onChanged: refresh })
+          : null,
         h(PendingList, { pending: state.pending || [], onChanged: refresh }),
       );
     }

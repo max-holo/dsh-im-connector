@@ -119,22 +119,27 @@ describe("channels (fake CLI)", () => {
     ]);
   });
 
-  it("dingtalk listen streams both group and direct NDJSON and normalizes them", async () => {
+  it("dingtalk listen streams at-me/all-direct/all-group NDJSON and normalizes them", async () => {
     process.env.FAKE_CLI_STREAM = "1";
     try {
       const ch = new DingTalkChannel(dRunner());
       const events: ImInboundMessage[] = [];
       const handle = await ch.listen((m) => events.push(m));
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 400));
       handle.stop();
-      expect(events.length).toBe(2); // all-group + all-direct 各一条
-      const group = events.find((e) => e.conversationType === "group");
+      expect(events.length).toBe(3); // at-me / all-direct / all-group 各一条
+      const atMe = events.find((e) => e.conversationId === "cid-9");
+      const allGroup = events.find((e) => e.conversationId === "cid-g");
       const direct = events.find((e) => e.conversationType === "direct");
-      expect(group).toMatchObject({
-        conversationId: "cid-9",
+      expect(atMe).toMatchObject({
+        conversationType: "group",
         senderName: "张三",
         text: "帮我查下日程",
         mentionedBot: true,
+      });
+      expect(allGroup).toMatchObject({
+        conversationType: "group",
+        text: "群里普通消息",
       });
       expect(direct).toMatchObject({
         conversationId: "cid-d",

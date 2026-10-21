@@ -111,12 +111,12 @@ export class DingTalkChannel implements ImChannel {
     ]);
   }
 
-  /** 同时监听「群里 @我」与「私聊」（两个 Stream 连接），任一断开由引擎监督重启。 */
+  /** 同时监听「群里 @我」「私聊」「全部群消息（用于远程指令前缀触发）」，任一断开由引擎监督重启。 */
   async listen(
     onMessage: (m: ImInboundMessage) => void,
   ): Promise<{ stop: () => void; done: Promise<void> }> {
     const handles: Array<{ stop: () => void; done: Promise<void> }> = [];
-    for (const kind of ["at-me", "all-direct"]) {
+    for (const kind of ["at-me", "all-direct", "all-group"]) {
       handles.push(
         await this.runner.stream(["event", "+listen-im", "--kind", kind, "--format", "ndjson"], (line) => {
           if (line.startsWith("\u0000")) return; // 内部控制行

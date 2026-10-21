@@ -53,7 +53,7 @@ describe("engine (mock ctx + stub channel)", () => {
         };
       },
       async status() {
-        return { user_id: "self-1" };
+        return { user_id: "self-1", user_name: "马玄" };
       },
     };
     const sessionController = {
@@ -195,5 +195,45 @@ describe("engine (mock ctx + stub channel)", () => {
     };
     expect(gateAllows(selfMsg, selfIds, undefined, selfNames)).toBe(false);
     expect(gateAllows(selfMsg, selfIds, undefined, selfNames, true)).toBe(true);
+  });
+
+  it("self-command prefix from own account triggers; others and non-prefixed self messages do not", async () => {
+    fresh();
+    const stop = createEngine(ctx, [channel], {
+      replyIdleMs: 20,
+      command: () => ({ enabled: true, prefix: "AI:" }),
+    });
+    await tick();
+    // 自己发「AI: 指令」→ 触发派发
+    inbound!({
+      conversationId: "g1",
+      conversationType: "group",
+      senderId: "self-1",
+      senderName: "马玄",
+      text: "AI: 查一下今天的日程",
+    });
+    await tick(300);
+    expect(prompts).toHaveLength(1);
+    // 别人发同样前缀 → 不触发（仅本人账号）
+    inbound!({
+      conversationId: "g1",
+      conversationType: "group",
+      senderId: "other",
+      senderName: "张三",
+      text: "AI: 你好",
+    });
+    await tick(300);
+    expect(prompts).toHaveLength(1);
+    // 自己发普通消息 → 不触发
+    inbound!({
+      conversationId: "g1",
+      conversationType: "group",
+      senderId: "self-1",
+      senderName: "马玄",
+      text: "随便聊聊",
+    });
+    await tick(300);
+    expect(prompts).toHaveLength(1);
+    stop();
   });
 });

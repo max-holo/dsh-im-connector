@@ -92,6 +92,8 @@ export interface EngineOptions {
   allowSelf?: () => boolean;
   /** 回复收集的静默判定时长（毫秒），默认 2500；测试可调小。 */
   replyIdleMs?: number;
+  /** 远程指令：本人在群里发「<prefix> 指令」触发本机 Agent。 */
+  command?: () => { enabled: boolean; prefix: string };
   /** 私聊准入：白名单判定 + 待批准登记。 */
   access?: {
     isApproved(providerId: string, senderId: string): boolean;
@@ -180,10 +182,28 @@ export function createEngine(
               openDingTalkId: message.senderOpenDingTalkId,
             }
           : { conversationId: message.conversationId, kind: "group" };
+
+      // 远程指令：本人账号在群里发「<prefix> 指令」→ 直接交给本机 Agent（不 @ 任何人）。
+      const cmd = opts.command?.();
+      const prefix = cmd?.prefix ?? "AI:";
+      const isSelf = Boolean(message.senderName && selfNames.has(message.senderName));
+      const trimmed = message.text.trim();
+      const selfCommand =
+        message.conversationType === "group" &&
+        isSelf &&
+        Boolean(cmd?.enabled) &&
+        trimmed.startsWith(prefix) &&
+        trimmed.slice(prefix.length).trim().length > 0;
+      let promptText = message.text;
+      if (selfCommand) {
+        promptText = trimmed.slice(prefix.length).trim();
+        diag(`self-command: ${promptText.slice(0, 60)}`);
+      }
+
       const isApproved = opts.access
         ? (senderId: string) => opts.access!.isApproved(channel.providerId, senderId)
         : undefined;
-      if (!gateAllows(message, selfIds, isApproved, selfNames, opts.allowSelf?.() ?? false)) {
+      if (!selfCommand && !gateAllows(message, selfIds, isApproved, selfNames, opts.allowSelf?.() ?? false)) {
         // 未批准的私聊：登记待批准，首次发一次性提示。
         if (
           opts.access &&
@@ -225,7 +245,7 @@ export function createEngine(
           requestId,
           sessionId,
           mode: "queue",
-          content: [{ type: "text", text: message.text }],
+          content: [{ type: "text", text: promptText }],
         },
         new AbortController().signal,
       );

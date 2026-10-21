@@ -21,6 +21,8 @@ export type ImConnectConfigData = {
   whitelist: Record<string, string[]>;
   /** 调试：允许处理「自己」发的消息（仅用于自测，生产默认关闭）。 */
   debug?: { allowSelf?: boolean };
+  /** 远程指令：自己在群里发「<prefix> 指令」触发本机 Agent（仅本人账号生效）。 */
+  command?: { enabled?: boolean; prefix?: string };
 };
 
 const DEFAULTS: ImConnectConfigData = {
@@ -30,6 +32,7 @@ const DEFAULTS: ImConnectConfigData = {
   },
   whitelist: {},
   debug: { allowSelf: false },
+  command: { enabled: true, prefix: "AI:" },
 };
 
 const PENDING_LIMIT = 50;
@@ -130,6 +133,21 @@ export class JsonConfigStore {
     return Boolean(this.load().debug?.allowSelf);
   }
 
+  /** 远程指令配置：enabled + prefix。 */
+  getCommand(): { enabled: boolean; prefix: string } {
+    const c = this.load().command;
+    return { enabled: c?.enabled ?? true, prefix: c?.prefix || "AI:" };
+  }
+
+  setCommand(patch: { enabled?: boolean; prefix?: string }): void {
+    const data = this.load();
+    data.command = {
+      enabled: patch.enabled ?? data.command?.enabled ?? true,
+      prefix: patch.prefix || data.command?.prefix || "AI:",
+    };
+    this.save(data);
+  }
+
   private load(): ImConnectConfigData {
     try {
       const loaded = JSON.parse(readFileSync(this.file, "utf8")) as Partial<ImConnectConfigData>;
@@ -137,12 +155,14 @@ export class JsonConfigStore {
         providers: { ...DEFAULTS.providers, ...(loaded.providers ?? {}) },
         whitelist: loaded.whitelist ?? {},
         debug: { ...DEFAULTS.debug, ...(loaded.debug ?? {}) },
+        command: { ...DEFAULTS.command, ...(loaded.command ?? {}) },
       };
     } catch {
       return {
         providers: { ...DEFAULTS.providers },
         whitelist: {},
         debug: { ...DEFAULTS.debug },
+        command: { ...DEFAULTS.command },
       };
     }
   }
