@@ -247,6 +247,7 @@ export function createEngine(
         log.info(`[im-connect] new session ${sessionId} for ${key}`);
       }
       diag(`session=${sessionId}`);
+      const turnsBefore = readTurnOutline(sessionId).length;
       const requestId = `im-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       // prompt 前先 resolve/resume 会话的 Agent
       await ctx.sessionController.resolveAgent(sessionId);
@@ -260,23 +261,32 @@ export function createEngine(
         },
         new AbortController().signal,
       );
-      diag("prompt accepted, collecting reply");
-      const reply = await collectReply(
-        ctx,
-        sessionId,
-        (e) => diag(`collect error: ${(e as Error)?.message ?? String(e)}`),
-        { idleMs: opts.replyIdleMs },
+      diag("prompt accepted, waiting for reply");
+      // 回复获取：投影轮询为主（回合落盘即拿最终文本，稳定），流式为辅（首帧更快）。
+      const reply = await obtainReply(ctx, sessionId, turnsBefore, (e) =>
+        diag(`collect error: ${(e as Error)?.message ?? String(e)}`),
       );
       diag(`collected ${reply.length} chars: ${reply.slice(0, 80)}`);
       if (reply.trim()) {
+        // 诊断：发送前记录目标与文本长度/结尾，失败时记录命令与 stderr
+        diag(`sendText start target=${target.kind}:${target.conversationId} len=${reply.length} tail=${JSON.stringify(reply.slice(-40))}`);
         await channel.sendText(target, reply.trim());
         diag(`sendText ok (group=${target.kind === "group" ? target.conversationId : target.openDingTalkId})`);
         log.info(`[im-connect] replied to ${channel.providerId}:${message.conversationId}`);
       } else {
-        diag("empty reply, skip send");
+        diag("empty reply, sending notice");
+        // 回合没有产出文本（模型/工具异常或超时）：回一条明确提示，避免用户干等
+        try {
+          await channel.sendText(target, "【IM 连接】本轮 Agent 没有生成回复（可能超时或会话异常），请重试或检查 DSH 会话。");
+        } catch {
+          /* 提示失败不阻断 */
+        }
       }
     } catch (e) {
-      diag(`ERROR ${(e as Error)?.message ?? String(e)}`);
+      const err = e as Error & { command?: string; stderr?: string };
+      diag(
+        `ERROR ${err?.message ?? String(e)}${err?.command ? ` | cmd=${err.command}` : ""}${err?.stderr ? ` | stderr=${err.stderr.slice(0, 300)}` : ""}`,
+      );
       log.error(`[im-connect] dispatch failed: ${(e as Error)?.message ?? String(e)}`);
     }
   };
@@ -381,6 +391,52 @@ export function gateAllows(
   if (message.conversationType === "group") return message.mentionedBot === true;
   if (!message.senderId) return false;
   return isApproved ? isApproved(message.senderId) : true;
+}
+
+/** 读取会话的回合大纲（turns 数组）；失败返回空数组。 */
+function readTurnOutline(sessionId: string): Array<{ prompt?: string; response?: string }> {
+  try {
+    const home = process.env.USERPROFILE ?? process.env.HOME ?? "";
+    if (!home) return [];
+    const file = join(home, ".dsh", "storages", "session_projcache", "sessions", `${sessionId}.json`);
+    const raw = JSON.parse(readFileSync(file, "utf8")) as {
+      record?: { rows?: { turnOutline?: { val?: { turns?: Array<{ prompt?: string; response?: string }> } } } };
+    };
+    return raw?.record?.rows?.turnOutline?.val?.turns ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 获取本轮最终回复：投影轮询为主（回合落盘即得最终文本，可靠），
+ * 流式收集为辅（能更快拿到首段文本）。两者取先到者。
+ */
+async function obtainReply(
+  ctx: EngineContext,
+  sessionId: string,
+  turnsBefore: number,
+  onStreamError?: (e: unknown) => void,
+  timeoutMs = 150_000,
+): Promise<string> {
+  const streamPromise = collectReply(ctx, sessionId, onStreamError).then((t) => t.trim()).catch(() => "");
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    // 1) 投影：新回合出现且带回复 → 已完成
+    const turns = readTurnOutline(sessionId);
+    if (turns.length > turnsBefore) {
+      const last = turns[turns.length - 1];
+      if (typeof last?.response === "string" && last.response.trim()) return last.response.trim();
+    }
+    // 2) 流式：最多等 1.5s，有非空文本就先用
+    const streamed = await Promise.race([
+      streamPromise,
+      new Promise<string>((resolve) => setTimeout(() => resolve(""), 1_500)),
+    ]);
+    if (streamed) return streamed;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return "";
 }
 
 /**
