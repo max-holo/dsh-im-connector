@@ -5,3 +5,7 @@ export { dingtalk } from "./providers/dingtalk.js";
 export { wecom } from "./providers/wecom.js";
 export { getProvider, listProviders } from "./providers/registry.js";
 export { buildMcpServer, type McpServerOptions } from "./mcp/server.js";
+export type { ImChannel, ImInboundMessage, ImSendTarget } from "./channels/types.js";
+export { DingTalkChannel, normalizeDingTalkEvent } from "./channels/dingtalk.js";
+export { WeComChannel } from "./channels/wecom.js";
+export { getChannel, listChannels } from "./channels/registry.js";

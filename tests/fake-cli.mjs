@@ -18,7 +18,24 @@ if (process.env.FAKE_CLI_ERROR === "1") {
   process.exit(3);
 }
 
-if (process.env.FAKE_CLI_PLAIN === "1") {
+if (process.env.FAKE_CLI_STREAM === "1") {
+  process.stdout.write(
+    JSON.stringify({
+      type: "event",
+      data: {
+        conversationId: "cid-9",
+        conversationType: "2",
+        senderStaffId: "u1",
+        senderNick: "张三",
+        msgtype: "text",
+        text: { content: "帮我查下日程" },
+        isAtBot: true,
+      },
+    }) + "\n",
+  );
+  process.stdin.resume();
+  process.on("SIGTERM", () => process.exit(0));
+} else if (process.env.FAKE_CLI_PLAIN === "1") {
   process.stdout.write("plain text, not json");
 } else {
   process.stdout.write(JSON.stringify({ ok: true, data: { args, marker: "fake-cli" } }));
