@@ -1,3 +1,6 @@
+// src/plugin/index.ts
+import { join as join4 } from "node:path";
+
 // src/plugin/engine.ts
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
@@ -26,7 +29,7 @@ var dingtalk = {
 };
 
 // src/cli/runner.ts
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -224,7 +227,11 @@ var CliRunner = class {
       stop: () => {
         try {
           child.stdin.end();
-          child.kill("SIGTERM");
+          if (process.platform === "win32" && child.pid) {
+            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+          } else {
+            child.kill("SIGTERM");
+          }
         } catch {
         }
       }
@@ -430,7 +437,7 @@ function dataFile(ctx) {
   mkdirSync(dir, { recursive: true });
   return join2(dir, "session-map.json");
 }
-function createEngine(ctx, channels = listChannels()) {
+function createEngine(ctx, channels = listChannels(), opts = {}) {
   const log = ctx.logger ?? { info: () => {
   }, warn: () => {
   }, error: () => {
@@ -442,6 +449,7 @@ function createEngine(ctx, channels = listChannels()) {
   const dispatch = async (channel, message) => {
     if (disposed) return;
     try {
+      if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
       if (!gateAllows(message, selfIds)) return;
       const key = `${channel.providerId}:${message.conversationId}`;
       let sessionId = store.get(key);
@@ -473,6 +481,10 @@ function createEngine(ctx, channels = listChannels()) {
   };
   void (async () => {
     for (const channel of channels) {
+      if (opts.isEnabled && !opts.isEnabled(channel.providerId)) {
+        log.info(`[im-connect] ${channel.providerId} receive disabled, listener skipped`);
+        continue;
+      }
       try {
         const handle = await channel.listen((m) => {
           void dispatch(channel, m);
@@ -533,18 +545,229 @@ async function collectReply(ctx, sessionId) {
   return parts.join("");
 }
 
+// src/plugin/config.ts
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+var DEFAULTS = {
+  providers: {
+    dingtalk: { receive: true },
+    wecom: { receive: false }
+  }
+};
+function resolveDataDir() {
+  const dir = join3(process.env.TEMP ?? "/tmp", "im-connect");
+  mkdirSync2(dir, { recursive: true });
+  return dir;
+}
+var JsonConfigStore = class {
+  constructor(file) {
+    this.file = file;
+  }
+  file;
+  getReceive(providerId) {
+    return this.load().providers[providerId]?.receive ?? false;
+  }
+  setReceive(providerId, enabled) {
+    const data = this.load();
+    data.providers[providerId] = { receive: enabled };
+    try {
+      writeFileSync2(this.file, JSON.stringify(data, null, 2));
+    } catch {
+    }
+  }
+  list() {
+    return Object.entries(this.load().providers).map(([provider, c]) => ({
+      provider,
+      receive: c.receive
+    }));
+  }
+  load() {
+    try {
+      const loaded = JSON.parse(readFileSync2(this.file, "utf8"));
+      return { providers: { ...DEFAULTS.providers, ...loaded.providers ?? {} } };
+    } catch {
+      return { providers: { ...DEFAULTS.providers } };
+    }
+  }
+};
+
+// src/plugin/host.ts
+import { spawn as spawn2 } from "node:child_process";
+var LOGIN_COMMANDS = {
+  dingtalk: { bin: "dws", args: ["auth", "login", "--device", "--recommend"] },
+  wecom: { bin: "wecom-cli", args: ["auth", "init", "--noninteractive"] }
+};
+var ImConnectHost = class {
+  config;
+  login = { running: false, output: "", done: true, exitCode: null };
+  constructor(config) {
+    this.config = config;
+  }
+  startLogin(provider) {
+    const cmd = LOGIN_COMMANDS[provider];
+    if (!cmd) return { ok: false, error: `unknown provider: ${provider}` };
+    if (this.login.running) return { ok: false, error: "a login is already running" };
+    this.login = { running: true, provider, output: "", done: false, exitCode: null };
+    const child = spawn2(cmd.bin, cmd.args, {
+      shell: process.platform === "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+    const append = (chunk) => {
+      this.login.output += chunk.toString("utf8");
+      if (this.login.output.length > 2e4) {
+        this.login.output = this.login.output.slice(-2e4);
+      }
+    };
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
+    child.on("exit", (code) => {
+      this.login.running = false;
+      this.login.done = true;
+      this.login.exitCode = code;
+    });
+    return { ok: true };
+  }
+  getLoginStatus() {
+    return { ...this.login };
+  }
+  /** 聚合各渠道的接收开关与连接状态。 */
+  async collectState() {
+    const providers = [];
+    for (const channel of listChannels()) {
+      let connected = false;
+      try {
+        connected = await isConnected(channel);
+      } catch {
+        connected = false;
+      }
+      providers.push({
+        id: channel.providerId,
+        displayName: displayNameOf(channel.providerId),
+        receive: this.config.getReceive(channel.providerId),
+        connected
+      });
+    }
+    return { providers };
+  }
+};
+async function isConnected(channel) {
+  const status = await channel.status();
+  if (typeof status === "string") return status.trim() === "authorized";
+  if (status && typeof status === "object") return Boolean(status.authenticated ?? status.token_valid);
+  return false;
+}
+function displayNameOf(id) {
+  return id === "dingtalk" ? "\u9489\u9489" : id === "wecom" ? "\u4F01\u4E1A\u5FAE\u4FE1" : id;
+}
+function sendJson(res, status, body) {
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(body));
+}
+function readBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+function registerRoutes(ctx, host) {
+  const disposers = [];
+  const register = (path, handler) => {
+    try {
+      disposers.push(
+        ctx.webServer.register({
+          kind: "exact",
+          path,
+          handler: async (req, res) => {
+            if (!guard(req, res)) return;
+            await handler(req, res);
+          }
+        })
+      );
+    } catch (e) {
+      console.warn(`[im-connect] route ${path} registration skipped: ${e?.message}`);
+    }
+  };
+  const guard = (req, res) => {
+    const rejection = ctx.connection.requestRejection(req);
+    if (rejection !== void 0) {
+      res.writeHead(rejection);
+      res.end();
+      return false;
+    }
+    return true;
+  };
+  register("/im-connect/state", async (req, res) => {
+    sendJson(res, 200, await host.collectState());
+  });
+  register("/im-connect/receive", async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    const body = await readBody(req);
+    host.config.setReceive(String(body.provider ?? ""), Boolean(body.enabled));
+    sendJson(res, 200, { ok: true });
+  });
+  register("/im-connect/login", async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    const body = await readBody(req);
+    sendJson(res, 200, host.startLogin(String(body.provider ?? "")));
+  });
+  register("/im-connect/login-status", (req, res) => {
+    sendJson(res, 200, host.getLoginStatus());
+  });
+  return () => {
+    for (const dispose of disposers.splice(0)) {
+      try {
+        dispose();
+      } catch {
+      }
+    }
+  };
+}
+
 // src/plugin/index.ts
-var inject = ["sessionController"];
+var inject = ["sessionController", "webServer", "connection"];
 function apply(ctx) {
+  const dataDir = resolveDataDir();
+  const config = new JsonConfigStore(join4(dataDir, "config.json"));
+  const host = new ImConnectHost(config);
   const engineCtx = {
     sessionController: ctx.sessionController,
-    // 仅依赖已注入的 sessionController 与标准 ctx.on；数据目录由引擎回退到临时目录。
     onDispose: (fn) => {
       ctx.on("dispose", fn);
     }
   };
-  const stop = createEngine(engineCtx);
-  return stop;
+  const stopEngine = createEngine(engineCtx, void 0, {
+    isEnabled: (providerId) => config.getReceive(providerId)
+  });
+  const stopRoutes = registerRoutes(
+    { webServer: ctx.webServer, connection: ctx.connection },
+    host
+  );
+  const dispose = () => {
+    try {
+      stopEngine();
+    } catch {
+    }
+    try {
+      stopRoutes();
+    } catch {
+    }
+  };
+  ctx.on("dispose", dispose);
+  return dispose;
 }
 export {
   apply,

@@ -80,7 +80,11 @@ function dataFile(ctx: EngineContext): string {
  * Dispatcher（resolveAgent → prompt → follow 收集回复 → 渠道回发）。
  * 渠道只收发；引擎不写死任何平台名。
  */
-export function createEngine(ctx: EngineContext, channels: ImChannel[] = listChannels()): () => void {
+export function createEngine(
+  ctx: EngineContext,
+  channels: ImChannel[] = listChannels(),
+  opts: { isEnabled?: (providerId: string) => boolean } = {},
+): () => void {
   const log = ctx.logger ?? { info: () => {}, warn: () => {}, error: () => {} };
   const store = new JsonSessionMap(dataFile(ctx));
   const stops: Array<() => void> = [];
@@ -90,6 +94,7 @@ export function createEngine(ctx: EngineContext, channels: ImChannel[] = listCha
   const dispatch = async (channel: ImChannel, message: ImInboundMessage): Promise<void> => {
     if (disposed) return;
     try {
+      if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
       if (!gateAllows(message, selfIds)) return;
       const key = `${channel.providerId}:${message.conversationId}`;
       let sessionId = store.get(key);
@@ -124,6 +129,10 @@ export function createEngine(ctx: EngineContext, channels: ImChannel[] = listCha
   // 启动各渠道监听
   void (async () => {
     for (const channel of channels) {
+      if (opts.isEnabled && !opts.isEnabled(channel.providerId)) {
+        log.info(`[im-connect] ${channel.providerId} receive disabled, listener skipped`);
+        continue;
+      }
       try {
         const handle = await channel.listen((m) => {
           void dispatch(channel, m);

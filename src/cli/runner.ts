@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ImProviderSpec } from "../providers/types.js";
@@ -171,7 +171,12 @@ export class CliRunner {
       stop: () => {
         try {
           child.stdin.end();
-          child.kill("SIGTERM");
+          if (process.platform === "win32" && child.pid) {
+            // dws 的 listen 会 fork 总线子进程，需整树终止（Windows）。
+            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+          } else {
+            child.kill("SIGTERM");
+          }
         } catch {
           /* ignore */
         }
