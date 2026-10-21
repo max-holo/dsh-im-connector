@@ -40,6 +40,27 @@ describe("channels (fake CLI)", () => {
     ]);
   });
 
+  it("dingtalk sendText to a direct target uses --user", async () => {
+    const ch = new DingTalkChannel(dRunner());
+    const data = (await ch.sendText(
+      { conversationId: "c-1", kind: "direct", userId: "u-9" },
+      "hi",
+    )) as { data: { args: string[] } };
+    expect(data.data.args).toEqual([
+      "chat",
+      "+messages-send",
+      "--user",
+      "u-9",
+      "--markdown",
+      "hi",
+      "--identity",
+      "user",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+  });
+
   it("wecom sendText → message send --msg-type text --text json", async () => {
     const ch = new WeComChannel(wRunner());
     const data = (await ch.sendText({ conversationId: "chat-1" }, "你好")) as {
@@ -77,21 +98,27 @@ describe("channels (fake CLI)", () => {
     ]);
   });
 
-  it("dingtalk listen streams NDJSON and normalizes events", async () => {
+  it("dingtalk listen streams both group and direct NDJSON and normalizes them", async () => {
     process.env.FAKE_CLI_STREAM = "1";
     try {
       const ch = new DingTalkChannel(dRunner());
       const events: ImInboundMessage[] = [];
       const handle = await ch.listen((m) => events.push(m));
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 300));
       handle.stop();
-      expect(events.length).toBe(1);
-      expect(events[0]).toMatchObject({
+      expect(events.length).toBe(2); // all-group + all-direct 各一条
+      const group = events.find((e) => e.conversationType === "group");
+      const direct = events.find((e) => e.conversationType === "direct");
+      expect(group).toMatchObject({
         conversationId: "cid-9",
-        conversationType: "group",
         senderName: "张三",
         text: "帮我查下日程",
         mentionedBot: true,
+      });
+      expect(direct).toMatchObject({
+        conversationId: "cid-d",
+        senderName: "张三",
+        text: "私聊你好",
       });
     } finally {
       delete process.env.FAKE_CLI_STREAM;

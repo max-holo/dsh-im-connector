@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listChannels } from "../channels/registry.js";
-import type { ImChannel, ImInboundMessage } from "../channels/types.js";
+import type { ImChannel, ImInboundMessage, ImSendTarget } from "../channels/types.js";
 
 /** 最小化 Host 结构类型：插件在 DSH Host 内运行，避免硬依赖 DSH 类型包。 */
 
@@ -112,6 +112,10 @@ export function createEngine(
     if (disposed) return;
     try {
       if (opts.isEnabled && !opts.isEnabled(channel.providerId)) return;
+      const target: ImSendTarget =
+        message.conversationType === "direct"
+          ? { conversationId: message.conversationId, kind: "direct", userId: message.senderId }
+          : { conversationId: message.conversationId, kind: "group" };
       const isApproved = opts.access
         ? (senderId: string) => opts.access!.isApproved(channel.providerId, senderId)
         : undefined;
@@ -131,7 +135,7 @@ export function createEngine(
           if (first) {
             opts.access.markNotified(channel.providerId, message.senderId);
             try {
-              await channel.sendText({ conversationId: message.conversationId }, PENDING_NOTICE);
+              await channel.sendText(target, PENDING_NOTICE);
             } catch {
               /* 提示失败不阻断 */
             }
@@ -161,7 +165,7 @@ export function createEngine(
       );
       const reply = await collectReply(ctx, sessionId);
       if (reply.trim()) {
-        await channel.sendText({ conversationId: message.conversationId }, reply.trim());
+        await channel.sendText(target, reply.trim());
         log.info(`[im-connect] replied to ${channel.providerId}:${message.conversationId}`);
       }
     } catch (e) {

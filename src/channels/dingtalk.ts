@@ -59,6 +59,19 @@ export class DingTalkChannel implements ImChannel {
   }
 
   async sendText(target: ImSendTarget, text: string): Promise<unknown> {
+    if (target.kind === "direct" && target.userId) {
+      return this.runner.runJson([
+        "chat",
+        "+messages-send",
+        "--user",
+        target.userId,
+        "--markdown",
+        text,
+        "--identity",
+        "user",
+        "--yes",
+      ]);
+    }
     return this.runner.runJson([
       "chat",
       "+messages-send",
@@ -72,15 +85,26 @@ export class DingTalkChannel implements ImChannel {
     ]);
   }
 
-  async listen(onMessage: (m: ImInboundMessage) => void): Promise<{ stop: () => void; done: Promise<void> }> {
-    return this.runner.stream(
-      ["event", "+listen-im", "--kind", "all-group", "--format", "ndjson"],
-      (line) => {
-        if (line.startsWith("\u0000")) return; // 内部控制行
-        const message = normalizeDingTalkEvent(line);
-        if (message) onMessage(message);
+  /** 同时监听群聊与私聊（两个 Stream 连接），任一断开由引擎监督重启。 */
+  async listen(
+    onMessage: (m: ImInboundMessage) => void,
+  ): Promise<{ stop: () => void; done: Promise<void> }> {
+    const handles: Array<{ stop: () => void; done: Promise<void> }> = [];
+    for (const kind of ["all-group", "all-direct"]) {
+      handles.push(
+        await this.runner.stream(["event", "+listen-im", "--kind", kind, "--format", "ndjson"], (line) => {
+          if (line.startsWith("\u0000")) return; // 内部控制行
+          const message = normalizeDingTalkEvent(line);
+          if (message) onMessage(message);
+        }),
+      );
+    }
+    return {
+      stop: () => {
+        for (const handle of handles) handle.stop();
       },
-    );
+      done: Promise.race(handles.map((handle) => handle.done)),
+    };
   }
 
   async status(): Promise<unknown> {

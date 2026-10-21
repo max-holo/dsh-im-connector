@@ -106,7 +106,7 @@ describe("engine (mock ctx + stub channel)", () => {
     await tick(50);
     expect(created).toBe(1);
     expect(prompts).toEqual(["s-1"]);
-    expect(sent).toEqual([{ target: { conversationId: "g1" }, text: "你好" }]);
+    expect(sent).toEqual([{ target: { conversationId: "g1", kind: "group" }, text: "你好" }]);
 
     // 同一聊天第二条消息：复用会话
     inbound!({ conversationId: "g1", conversationType: "group", senderId: "other", text: "再说点", mentionedBot: true });

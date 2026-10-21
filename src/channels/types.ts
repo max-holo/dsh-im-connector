@@ -18,7 +18,11 @@ export interface ImInboundMessage {
 }
 
 export interface ImSendTarget {
+  /** 群聊 openConversationId；私聊为目标用户的 userId。 */
   conversationId: string;
+  kind?: "group" | "direct";
+  /** 私聊目标用户 id（钉钉 --user 发送用）。 */
+  userId?: string;
 }
 
 export interface ImChannel {
