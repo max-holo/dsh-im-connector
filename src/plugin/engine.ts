@@ -185,20 +185,22 @@ export function createEngine(
             }
           : { conversationId: message.conversationId, kind: "group" };
 
-      // 远程指令：本人账号在群里发「<prefix> 指令」→ 直接交给本机 Agent（不 @ 任何人）。
+      // 远程指令：本人账号在群里发「<prefix> 指令」→ 直接交给本机 Agent。
+      // 私密群里可 @自己 + 前缀（走可靠的 at-me 通道）；先剥掉开头的 @提及。
       const cmd = opts.command?.();
       const prefix = cmd?.prefix ?? "AI:";
       const isSelf = Boolean(message.senderName && selfNames.has(message.senderName));
       const trimmed = message.text.trim();
+      const body = trimmed.replace(/^(@[^\s]+\s*)+/, "").trim();
       const selfCommand =
         message.conversationType === "group" &&
         isSelf &&
         Boolean(cmd?.enabled) &&
-        trimmed.startsWith(prefix) &&
-        trimmed.slice(prefix.length).trim().length > 0;
-      let promptText = message.text;
+        body.startsWith(prefix) &&
+        body.slice(prefix.length).trim().length > 0;
+      let promptText = body;
       if (selfCommand) {
-        promptText = trimmed.slice(prefix.length).trim();
+        promptText = body.slice(prefix.length).trim();
         diag(`self-command: ${promptText.slice(0, 60)}`);
       } else {
         // 触发方式①：群聊 @我 代答开关（独立于远程指令）

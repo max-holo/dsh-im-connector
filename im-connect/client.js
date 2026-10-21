@@ -202,7 +202,7 @@ window.__ModuleLoader__.load({
         h('div', { style: s.row },
           h('div', { style: s.rowMain, flexDirection: 'column', alignItems: 'flex-start', gap: 2 },
             h('span', { style: s.name }, '远程指令'),
-            h('span', { style: s.account }, '你自己在群里发「前缀 + 指令」触发本机执行（仅你可见）'),
+            h('span', { style: s.account }, '私密群里 @自己 + 「前缀 指令」触发本机执行（仅你可见）'),
           ),
           h('div', { style: s.rowSide }, h(Switch, {
             on: command.enabled,
@@ -229,7 +229,7 @@ window.__ModuleLoader__.load({
           }, '保存')),
         ),
         h('p', { style: { fontSize: 12, color: C.sub, margin: 0 } },
-          '示例：' + (command.prefix || 'AI:') + ' 帮我看下今天的日程'),
+          '示例：@自己 ' + (command.prefix || 'AI:') + ' 帮我看下今天的日程'),
       );
     }
 
