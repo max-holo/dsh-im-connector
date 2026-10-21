@@ -236,4 +236,36 @@ describe("engine (mock ctx + stub channel)", () => {
     expect(prompts).toHaveLength(1);
     stop();
   });
+
+  it("atMe switch disables group @me replies while remote commands keep working", async () => {
+    fresh();
+    const stop = createEngine(ctx, [channel], {
+      replyIdleMs: 20,
+      command: () => ({ enabled: true, prefix: "AI:" }),
+      triggers: () => ({ atMe: false }),
+    });
+    await tick();
+    // 别人 @我 → 被 atMe 开关拦截
+    inbound!({
+      conversationId: "g1",
+      conversationType: "group",
+      senderId: "other",
+      senderName: "张三",
+      text: "帮我查下日程",
+      mentionedBot: true,
+    });
+    await tick(300);
+    expect(prompts).toHaveLength(0);
+    // 自己的远程指令 → 不受 @我 开关影响
+    inbound!({
+      conversationId: "g1",
+      conversationType: "group",
+      senderId: "self-1",
+      senderName: "马玄",
+      text: "AI: 查一下日程",
+    });
+    await tick(300);
+    expect(prompts).toHaveLength(1);
+    stop();
+  });
 });

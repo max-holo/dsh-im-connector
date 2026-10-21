@@ -163,15 +163,15 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function CommandCard({ command, onChanged }) {
+    function TriggersCard({ triggers, command, onChanged }) {
       const [prefix, setPrefix] = useState(command.prefix);
       const [busy, setBusy] = useState(false);
       useEffect(() => { setPrefix(command.prefix); }, [command.prefix]);
 
-      const post = async (body) => {
+      const post = async (path, body) => {
         setBusy(true);
         try {
-          await fetch('/im-connect/api/command', {
+          await fetch('/im-connect/api/' + path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -183,17 +183,31 @@ window.__ModuleLoader__.load({
       };
 
       return h('div', { style: s.card },
-        h('p', { style: s.sectionTitle }, '远程指令'),
-        h('p', { style: s.desc }, '在任意群里发送「前缀 + 指令」即可让本机 DSH 执行并回复（仅你的账号能触发，无需 @ 任何人）。'),
+        h('p', { style: s.sectionTitle }, '触发方式'),
+        // ① 群聊 @我 代答
         h('div', { style: s.row },
-          h('div', { style: s.rowMain },
-            h('span', { style: s.name }, '启用'),
-            h('span', { style: s.account }, '示例：' + (command.prefix || 'AI:') + ' 帮我看下今天的日程'),
+          h('div', { style: s.rowMain, flexDirection: 'column', alignItems: 'flex-start', gap: 2 },
+            h('span', { style: s.name }, '群聊 @我 代答'),
+            h('span', { style: s.account }, '别人在群里 @你 时，AI 代你回复（公开可见）'),
+          ),
+          h('div', { style: s.rowSide }, h(Switch, {
+            on: triggers.atMe,
+            busy,
+            onToggle: (next) => post('triggers', { atMe: next }),
+            label: '群聊 @我 代答开关',
+          })),
+        ),
+        h('div', { style: s.divider }),
+        // ② 远程指令
+        h('div', { style: s.row },
+          h('div', { style: s.rowMain, flexDirection: 'column', alignItems: 'flex-start', gap: 2 },
+            h('span', { style: s.name }, '远程指令'),
+            h('span', { style: s.account }, '你自己在群里发「前缀 + 指令」触发本机执行（仅你可见）'),
           ),
           h('div', { style: s.rowSide }, h(Switch, {
             on: command.enabled,
             busy,
-            onToggle: (next) => post({ enabled: next }),
+            onToggle: (next) => post('command', { enabled: next }),
             label: '远程指令开关',
           })),
         ),
@@ -210,10 +224,12 @@ window.__ModuleLoader__.load({
           ),
           h('div', { style: s.rowSide }, h('button', {
             style: s.btn,
-            onClick: () => { if (prefix.trim()) post({ prefix: prefix.trim() }); },
+            onClick: () => { if (prefix.trim()) post('command', { prefix: prefix.trim() }); },
             disabled: busy || !prefix.trim(),
           }, '保存')),
         ),
+        h('p', { style: { fontSize: 12, color: C.sub, margin: 0 } },
+          '示例：' + (command.prefix || 'AI:') + ' 帮我看下今天的日程'),
       );
     }
 
@@ -273,8 +289,8 @@ window.__ModuleLoader__.load({
                 onCloseLogin: closeLogin,
               })),
         ),
-        state.command
-          ? h(CommandCard, { command: state.command, onChanged: refresh })
+        state.command && state.triggers
+          ? h(TriggersCard, { triggers: state.triggers, command: state.command, onChanged: refresh })
           : null,
         h(PendingList, { pending: state.pending || [], onChanged: refresh }),
       );

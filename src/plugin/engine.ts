@@ -94,6 +94,8 @@ export interface EngineOptions {
   replyIdleMs?: number;
   /** 远程指令：本人在群里发「<prefix> 指令」触发本机 Agent。 */
   command?: () => { enabled: boolean; prefix: string };
+  /** 触发方式：群聊 @我 代答开关。 */
+  triggers?: () => { atMe: boolean };
   /** 私聊准入：白名单判定 + 待批准登记。 */
   access?: {
     isApproved(providerId: string, senderId: string): boolean;
@@ -198,6 +200,13 @@ export function createEngine(
       if (selfCommand) {
         promptText = trimmed.slice(prefix.length).trim();
         diag(`self-command: ${promptText.slice(0, 60)}`);
+      } else {
+        // 触发方式①：群聊 @我 代答开关（独立于远程指令）
+        const triggers = opts.triggers?.() ?? { atMe: true };
+        if (message.conversationType === "group" && !triggers.atMe) {
+          diag("at-me trigger disabled, skip");
+          return;
+        }
       }
 
       const isApproved = opts.access

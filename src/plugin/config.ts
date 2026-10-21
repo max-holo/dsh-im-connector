@@ -23,6 +23,8 @@ export type ImConnectConfigData = {
   debug?: { allowSelf?: boolean };
   /** 远程指令：自己在群里发「<prefix> 指令」触发本机 Agent（仅本人账号生效）。 */
   command?: { enabled?: boolean; prefix?: string };
+  /** 触发方式①：群聊里别人 @我 时 AI 代答。 */
+  triggers?: { atMe?: boolean };
 };
 
 const DEFAULTS: ImConnectConfigData = {
@@ -33,6 +35,7 @@ const DEFAULTS: ImConnectConfigData = {
   whitelist: {},
   debug: { allowSelf: false },
   command: { enabled: true, prefix: "AI:" },
+  triggers: { atMe: true },
 };
 
 const PENDING_LIMIT = 50;
@@ -148,6 +151,17 @@ export class JsonConfigStore {
     this.save(data);
   }
 
+  /** 触发方式配置：群聊 @我 代答。 */
+  getTriggers(): { atMe: boolean } {
+    return { atMe: this.load().triggers?.atMe ?? true };
+  }
+
+  setTriggers(patch: { atMe?: boolean }): void {
+    const data = this.load();
+    data.triggers = { atMe: patch.atMe ?? data.triggers?.atMe ?? true };
+    this.save(data);
+  }
+
   private load(): ImConnectConfigData {
     try {
       const loaded = JSON.parse(readFileSync(this.file, "utf8")) as Partial<ImConnectConfigData>;
@@ -156,6 +170,7 @@ export class JsonConfigStore {
         whitelist: loaded.whitelist ?? {},
         debug: { ...DEFAULTS.debug, ...(loaded.debug ?? {}) },
         command: { ...DEFAULTS.command, ...(loaded.command ?? {}) },
+        triggers: { ...DEFAULTS.triggers, ...(loaded.triggers ?? {}) },
       };
     } catch {
       return {
@@ -163,6 +178,7 @@ export class JsonConfigStore {
         whitelist: {},
         debug: { ...DEFAULTS.debug },
         command: { ...DEFAULTS.command },
+        triggers: { ...DEFAULTS.triggers },
       };
     }
   }

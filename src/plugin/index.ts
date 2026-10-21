@@ -40,6 +40,7 @@ export function apply(ctx: {
     isEnabled: (providerId) => config.getReceive(providerId),
     allowSelf: () => config.getAllowSelf(),
     command: () => config.getCommand(),
+    triggers: () => config.getTriggers(),
     access: {
       isApproved: (providerId, senderId) => config.isApproved(providerId, senderId),
       recordPending: (providerId, message) => config.recordPending(providerId, message),

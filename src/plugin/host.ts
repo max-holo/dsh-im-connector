@@ -123,6 +123,7 @@ export class ImConnectHost {
       lastSeenAt: number;
     }>;
     command: { enabled: boolean; prefix: string };
+    triggers: { atMe: boolean };
   }> {
     const providers = [];
     const pending = [];
@@ -184,7 +185,12 @@ export class ImConnectHost {
       }
     }
     pending.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
-    return { providers, pending, command: this.config.getCommand() };
+    return {
+      providers,
+      pending,
+      command: this.config.getCommand(),
+      triggers: this.config.getTriggers(),
+    };
   }
 
   /** 当前登录二维码 PNG：climp 写的文件优先，其次用提取到的 URL 现场生成。 */
@@ -376,6 +382,18 @@ export function registerRoutes(
       prefix: typeof body.prefix === "string" && body.prefix.trim() ? body.prefix.trim() : undefined,
     });
     sendJson(res, 200, { ok: true, command: host.config.getCommand() });
+  });
+
+  register(`${BASE}/triggers`, async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "POST only" });
+      return;
+    }
+    const body = await readBody(req);
+    host.config.setTriggers({
+      atMe: typeof body.atMe === "boolean" ? body.atMe : undefined,
+    });
+    sendJson(res, 200, { ok: true, triggers: host.config.getTriggers() });
   });
 
   register(`${BASE}/selftest`, async (req, res) => {
