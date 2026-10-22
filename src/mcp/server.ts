@@ -123,7 +123,8 @@ function buildLoginTool(): Tool {
     name: "login",
     description:
       "发起平台登录（无需终端）：企业微信会返回可直接渲染的扫码二维码图片；钉钉会拉起浏览器授权（或 mode=device 走设备码流程）。" +
-      `返回会话状态；完成后调用 login_status 确认。平台：${providers.map((p) => `${p.id}=${p.displayName}`).join("，")}。`,
+      "返回结果里的 markdown 字段是绝对路径图片语法，直接贴进回复即可在聊天里内联显示二维码。" +
+      `完成后调用 login_status 确认。平台：${providers.map((p) => `${p.id}=${p.displayName}`).join("，")}。`,
     inputSchema: {
       type: "object",
       properties: {
