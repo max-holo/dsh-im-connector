@@ -7,10 +7,15 @@
 ## 前置条件
 
 - Node.js >= 18
-- **钉钉**：`npm i -g dingtalk-workspace-cli`，然后 `dws auth login --recommend`
-- **企业微信**：`npm i -g @wecom/cli`，然后 `wecom-cli auth init --noninteractive` 扫码授权
+- 两个命令行工具（dws / wecom-cli）**已随包一起安装**（可选依赖），无需单独安装
+- 首次使用只需各登录一次（凭据保存在 CLI 自己的本地登录态，本包不接触凭据）：
 
-连接器不保存任何凭据，直接用两个 CLI 自己的登录态。
+```bash
+dws auth login --recommend                    # 钉钉
+wecom-cli auth init --noninteractive          # 企业微信（扫码授权）
+```
+
+> 使用 pnpm 安装时，若提示 CLI 不可用，允许依赖的安装脚本（`pnpm approve-builds`）或手动 `npm i -g dingtalk-workspace-cli @wecom/cli` 即可。
 
 ## 安装
 
@@ -18,6 +23,8 @@
 npx -y im-connector          # 直接用，无需安装
 npm i -g im-connector        # 或全局安装
 ```
+
+> 注意：首次安装会下载两个 CLI（dws 约 130MB），之后无需再装。
 
 ## 配置 MCP 客户端
 

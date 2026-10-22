@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import type { ImProviderSpec } from "../providers/types.js";
 import { CliError, parseErrorEnvelope } from "./errors.js";
 
@@ -125,8 +126,13 @@ export class CliRunner {
     if (bin !== this.spec.bin && existsSync(bin)) {
       return { command: bin, prefix: [], shell: false };
     }
-    // 3) 默认 bin：解析 npm 全局包内脚本
+    // 3) 随包安装的 CLI（optionalDependencies 里的依赖，开箱即用）
     if (bin === this.spec.bin) {
+      const local = localCliScript(this.spec);
+      if (local) {
+        return { command: process.execPath, prefix: [local], shell: false };
+      }
+      // 4) 回退：npm 全局安装的 CLI
       const globalRoot = await npmGlobalRoot();
       if (globalRoot) {
         const script = join(globalRoot, ...this.spec.binScript.split("/"));
@@ -134,9 +140,53 @@ export class CliRunner {
           return { command: process.execPath, prefix: [script], shell: false };
         }
       }
+      // 5) 通过 package.json 的 bin 字段再找一次（处理 binScript 与安装布局不一致）
+      const viaManifest = await cliScriptFromManifest(this.spec);
+      if (viaManifest) {
+        return { command: process.execPath, prefix: [viaManifest], shell: false };
+      }
     }
-    // 4) 回退：shell 执行（Windows shim）
+    // 6) 回退：shell 执行（Windows shim）
     return { command: bin, prefix: [], shell: process.platform === "win32" };
+  }
+}
+
+/**
+ * 解析随包安装的 CLI 脚本（包内 node_modules，如 optionalDependencies）。
+ * 返回可直接用 `node <script>` 执行的脚本路径；找不到返回 undefined。
+ */
+function localCliScript(spec: ImProviderSpec): string | undefined {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkgJson = require.resolve(`${spec.npmPackage}/package.json`);
+    const pkgDir = dirname(pkgJson);
+    // binScript = "<npmPackage>/bin/xxx.js" → 相对包目录的脚本路径
+    const rel = spec.binScript.slice(spec.npmPackage.length + 1);
+    const script = join(pkgDir, rel);
+    if (existsSync(script)) return script;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 通过包 manifest 的 bin 字段定位脚本（兼容 binScript 与实际 bin 布局不同的情况）。 */
+async function cliScriptFromManifest(spec: ImProviderSpec): Promise<string | undefined> {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkgJson = require.resolve(`${spec.npmPackage}/package.json`);
+    const manifest = JSON.parse(readFileSync(pkgJson, "utf8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const pkgDir = dirname(pkgJson);
+    const bins = typeof manifest.bin === "string" ? [manifest.bin] : Object.values(manifest.bin ?? {});
+    for (const rel of bins) {
+      const script = join(pkgDir, rel);
+      if (existsSync(script)) return script;
+    }
+    return undefined;
+  } catch {
+    return undefined;
   }
 }
 
