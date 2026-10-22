@@ -21,6 +21,10 @@ export interface ImProviderSpec {
   versionArgs?: string[];
   /** 查询登录状态的命令（走 JSON 输出），如 ["auth","status"]。 */
   authArgs?: string[];
+  /** 登录/授权命令（在 MCP 工具里后台执行），如 ["auth","login","--recommend"]。 */
+  loginArgs?: string[];
+  /** 扫码输出图片的参数名（值为 PNG 路径），如 wecom-cli 的 "--output-qrcode"。 */
+  qrOutputFlag?: string;
   /** 展示在 MCP 工具描述里的示例命令（数组形式，便于模型理解）。 */
   examples: string[];
 }

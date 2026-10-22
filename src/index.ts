@@ -5,3 +5,11 @@ export { dingtalk } from "./providers/dingtalk.js";
 export { wecom } from "./providers/wecom.js";
 export { getProvider, listProviders } from "./providers/registry.js";
 export { buildMcpServer, type McpServerOptions } from "./mcp/server.js";
+export {
+  authorizedOf,
+  loginStatus,
+  startLogin,
+  stopLogin,
+  type LoginSnapshot,
+  type LoginStatusResult,
+} from "./login/session.js";

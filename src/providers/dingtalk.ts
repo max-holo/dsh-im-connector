@@ -11,6 +11,7 @@ export const dingtalk: ImProviderSpec = {
   envBin: "DINGTALK_DWS_BIN",
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
+  loginArgs: ["auth", "login", "--recommend"],
   examples: [
     '["contact","+me"]',
     '["contact","+search-user","--query","张三"]',

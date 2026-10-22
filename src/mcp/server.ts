@@ -14,6 +14,7 @@ import {
 import { getProvider, listProviders } from "../providers/registry.js";
 import { CliRunner } from "../cli/runner.js";
 import { isCliError } from "../cli/errors.js";
+import { loginStatus, startLogin } from "../login/session.js";
 
 function buildRunTool(): Tool {
   const providers = listProviders();
@@ -116,10 +117,57 @@ async function collectProviderInfo(
   return info;
 }
 
+function buildLoginTool(): Tool {
+  const providers = listProviders();
+  return {
+    name: "login",
+    description:
+      "发起平台登录（无需终端）：企业微信会返回可直接渲染的扫码二维码图片；钉钉会拉起浏览器授权（或 mode=device 走设备码流程）。" +
+      `返回会话状态；完成后调用 login_status 确认。平台：${providers.map((p) => `${p.id}=${p.displayName}`).join("，")}。`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: {
+          type: "string",
+          enum: providers.map((p) => p.id),
+          description: "要登录的平台。",
+        },
+        mode: {
+          type: "string",
+          enum: ["browser", "device"],
+          description: "钉钉登录方式：browser=本机浏览器授权（默认），device=设备码（无头/远程环境）。企业微信固定扫码。",
+        },
+      },
+      required: ["provider"],
+    },
+  };
+}
+
+function buildLoginStatusTool(): Tool {
+  return {
+    name: "login_status",
+    description: "查询登录状态：是否已授权、登录进程是否仍在运行、二维码（若可用）与最近输出。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: {
+          type: "string",
+          enum: listProviders().map((p) => p.id),
+          description: "要查询的平台。",
+        },
+      },
+      required: ["provider"],
+    },
+  };
+}
+
 /**
- * 构建统一 IM 透传 MCP server：暴露 `run { provider, args }`（业务透传）与
- * `info`（版本/登录自检）两个工具，按 provider 注册表路由到底层 CLI。
- * 新增平台只需在 registry 追加 spec。
+ * 构建统一 IM 透传 MCP server：暴露
+ * - `run { provider, args }`：业务透传；
+ * - `info`：版本/登录自检；
+ * - `login { provider }`：发起扫码/浏览器登录（返回二维码图片）；
+ * - `login_status { provider }`：查询登录状态。
+ * 按 provider 注册表路由到底层 CLI；新增平台只需在 registry 追加 spec。
  */
 export interface McpServerOptions {
   name?: string;
@@ -136,12 +184,93 @@ export function buildMcpServer(options: McpServerOptions = {}): Server {
 
   const runTool = buildRunTool();
   const infoTool = buildInfoTool();
+  const loginTool = buildLoginTool();
+  const loginStatusTool = buildLoginStatusTool();
 
   server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => ({
-    tools: [runTool, infoTool],
+    tools: [runTool, infoTool, loginTool, loginStatusTool],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
+    if (request.params.name === "login" || request.params.name === "login_status") {
+      const { provider, mode } = (request.params.arguments ?? {}) as { provider?: string; mode?: string };
+      const spec = getProvider(provider as string);
+      if (!spec) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `未知平台 "${provider}"。可用：${listProviders().map((p) => p.id).join("，")}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      const runner = new CliRunner(spec);
+      const bin = options.binOverrides?.[spec.id];
+      try {
+        if (request.params.name === "login_status") {
+          const status = await loginStatus(spec, runner, { bin });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    ...status,
+                    authorized: status.authorized,
+                    hint: status.authorized ? "已登录，可以直接使用 run 工具。" : "尚未登录；请调用 login 获取二维码/打开授权页。",
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+        const login = await startLogin(spec, runner, {
+          bin,
+          mode: mode === "device" ? "device" : "browser",
+        });
+        const content: CallToolResult["content"] = [];
+        if (login.qrDataUrl?.startsWith("data:image/png;base64,")) {
+          content.push({
+            type: "image",
+            data: login.qrDataUrl.slice("data:image/png;base64,".length),
+            mimeType: "image/png",
+          });
+        }
+        content.push({
+          type: "text",
+          text: JSON.stringify(
+            {
+              provider: login.provider,
+              displayName: login.displayName,
+              running: login.running,
+              exitCode: login.exitCode,
+              qrPath: login.qrPath,
+              outputTail: login.output.slice(-800),
+              hint: login.qrDataUrl
+                ? "请用手机扫描二维码完成授权，然后调用 login_status 确认。"
+                : "请在浏览器完成授权（钉钉默认自动打开浏览器）；完成后调用 login_status 确认。",
+            },
+            null,
+            2,
+          ),
+        });
+        return { content };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${spec.displayName} ${request.params.name} failed: ${e instanceof Error ? e.message : String(e)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
     if (request.params.name === "info") {
       try {
         const providers = [];

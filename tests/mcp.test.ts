@@ -29,15 +29,17 @@ describe("unified IM MCP server", () => {
     await server.close();
   });
 
-  it("exposes run + info tools with provider enum [dingtalk, wecom]", async () => {
+  it("exposes run, info, login and login_status tools with provider enums", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(["run", "info"]);
+    expect(tools.map((t) => t.name)).toEqual(["run", "info", "login", "login_status"]);
     const schema = tools[0].inputSchema as {
       required?: string[];
       properties?: Record<string, { enum?: string[] }>;
     };
     expect(schema.required).toEqual(["provider", "args"]);
     expect(schema.properties?.provider.enum).toEqual(["dingtalk", "wecom"]);
+    const loginSchema = tools[2].inputSchema as { properties?: Record<string, { enum?: string[] }> };
+    expect(loginSchema.properties?.provider.enum).toEqual(["dingtalk", "wecom"]);
   });
 
   it("info reports per-provider version, auth status and resolved CLI path", async () => {

@@ -8,12 +8,7 @@
 
 - Node.js >= 18
 - 两个命令行工具（dws / wecom-cli）**已随包一起安装**（可选依赖），无需单独安装
-- 首次使用只需各登录一次（凭据保存在 CLI 自己的本地登录态，本包不接触凭据）：
-
-```bash
-dws auth login --recommend                    # 钉钉
-wecom-cli auth init --noninteractive          # 企业微信（扫码授权）
-```
+- **登录一次即可**（凭据保存在 CLI 自己的本地登录态，本包不接触凭据）——见下方「登录」
 
 > 使用 pnpm 安装时，若提示 CLI 不可用，允许依赖的安装脚本（`pnpm approve-builds`）或手动 `npm i -g dingtalk-workspace-cli @wecom/cli` 即可。
 
@@ -25,6 +20,24 @@ npm i -g im-connector        # 或全局安装
 ```
 
 > 注意：首次安装会下载两个 CLI（dws 约 130MB），之后无需再装。
+
+## 登录（扫码即可，不用终端）
+
+配置好 MCP 客户端后，让 Agent 调用 `login` 工具：
+
+| 平台 | 调用 | 交互 |
+|---|---|---|
+| 企业微信 | `login {provider:"wecom"}` | 返回**二维码图片**，用企业微信扫码 |
+| 钉钉 | `login {provider:"dingtalk"}` | 自动拉起**浏览器授权**（无头/远程环境用 `mode:"device"` 走设备码） |
+
+授权完成后调用 `login_status {provider}`，看到 `authorized: true` 即可开始使用。
+
+也可以在终端里手动登录：
+
+```bash
+dws auth login --recommend                    # 钉钉（浏览器授权）
+wecom-cli auth init --noninteractive          # 企业微信（终端二维码）
+```
 
 ## 配置 MCP 客户端
 

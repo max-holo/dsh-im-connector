@@ -24,7 +24,7 @@ export interface CliExecution {
   data: unknown;
 }
 
-interface LaunchSpec {
+export interface LaunchSpec {
   command: string;
   prefix: string[];
   shell: boolean;
@@ -62,6 +62,11 @@ export class CliRunner {
   async resolveScript(binOverride?: string): Promise<string> {
     const launch = await this.launch(binOverride);
     return launch.shell ? launch.command : (launch.prefix[0] ?? launch.command);
+  }
+
+  /** 暴露启动规格（供登录会话等需要自行 spawn 的场景复用解析逻辑）。 */
+  async resolveLaunch(binOverride?: string): Promise<LaunchSpec> {
+    return this.launch(binOverride);
   }
 
   private async execute(

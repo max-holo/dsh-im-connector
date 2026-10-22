@@ -1,0 +1,219 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CliRunner } from "../cli/runner.js";
+import type { ImProviderSpec } from "../providers/types.js";
+
+/** 一次登录会话的可观察状态。 */
+export interface LoginSnapshot {
+  provider: string;
+  displayName: string;
+  running: boolean;
+  startedAt: number;
+  endedAt?: number;
+  exitCode: number | null;
+  /** 输出尾部（用于展示授权链接 / 设备码 / 错误信息）。 */
+  output: string;
+  /** 二维码 PNG 的 data URL（企业微信扫码）。 */
+  qrDataUrl?: string;
+  /** 二维码文件路径（若 CLI 输出到文件）。 */
+  qrPath?: string;
+}
+
+/** 登录状态查询结果。 */
+export interface LoginStatusResult {
+  provider: string;
+  authorized: boolean;
+  running: boolean;
+  /** auth 查询的原始结果（JSON 或文本）。 */
+  auth?: unknown;
+  authError?: string;
+  output: string;
+  qrDataUrl?: string;
+}
+
+interface LiveSession {
+  child: ChildProcess;
+  output: string;
+  startedAt: number;
+  endedAt?: number;
+  exitCode: number | null;
+  qrPath?: string;
+  timer?: NodeJS.Timeout;
+}
+
+/** 每个 provider 最多一个进行中的登录会话。 */
+const sessions = new Map<string, LiveSession>();
+
+const MAX_OUTPUT = 8 * 1024;
+const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+const QR_WAIT_MS = 5_000;
+
+/**
+ * 发起登录（后台进程，不阻塞）：
+ * - 钉钉：`dws auth login --recommend` 会打开浏览器完成授权；
+ * - 企业微信：`auth init --noninteractive --output-qrcode <png>` 生成扫码图。
+ * 返回会话快照；已有进行中的会话则直接返回当前状态。
+ */
+export async function startLogin(
+  spec: ImProviderSpec,
+  runner: CliRunner,
+  opts: { bin?: string; mode?: "browser" | "device" } = {},
+): Promise<LoginSnapshot> {
+  const existing = sessions.get(spec.id);
+  if (existing && existing.exitCode === null) {
+    return await snapshot(spec, existing);
+  }
+
+  const launch = await runner.resolveLaunch(opts.bin);
+  const args = [...(spec.loginArgs ?? ["auth", "login"])];
+  if (spec.id === "dingtalk" && opts.mode === "device") {
+    args[args.length - 1] = "--device";
+  }
+
+  let qrPath: string | undefined;
+  if (spec.qrOutputFlag) {
+    qrPath = join(tmpdir(), `im-connector-${spec.id}-${Date.now()}.png`);
+    if (existsSync(qrPath)) rmSync(qrPath, { force: true });
+    args.push(spec.qrOutputFlag, qrPath);
+  }
+
+  const child = spawn(launch.command, [...launch.prefix, ...args], {
+    shell: launch.shell,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const session: LiveSession = {
+    child,
+    output: "",
+    startedAt: Date.now(),
+    exitCode: null,
+    qrPath,
+  };
+  sessions.set(spec.id, session);
+
+  const append = (chunk: Buffer): void => {
+    session.output = (session.output + chunk.toString("utf8")).slice(-MAX_OUTPUT);
+  };
+  child.stdout?.on("data", append);
+  child.stderr?.on("data", append);
+  child.on("exit", (code) => {
+    session.exitCode = code;
+    session.endedAt = Date.now();
+    if (session.timer) clearTimeout(session.timer);
+  });
+  child.on("error", (e) => {
+    session.output = (session.output + `\n[launch error] ${e.message}`).slice(-MAX_OUTPUT);
+    session.exitCode = -1;
+    session.endedAt = Date.now();
+  });
+  session.timer = setTimeout(() => {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
+  }, LOGIN_TIMEOUT_MS);
+
+  // 企业微信：等待二维码 PNG 写盘（最多 QR_WAIT_MS）
+  if (qrPath) {
+    const deadline = Date.now() + QR_WAIT_MS;
+    while (Date.now() < deadline && !existsSync(qrPath) && session.exitCode === null) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  return await snapshot(spec, session);
+}
+
+/** 查询登录状态：auth 查询 + 会话运行状态 + 二维码（若仍在生成中）。 */
+export async function loginStatus(
+  spec: ImProviderSpec,
+  runner: CliRunner,
+  opts: { bin?: string } = {},
+): Promise<LoginStatusResult> {
+  const session = sessions.get(spec.id);
+  const result: LoginStatusResult = {
+    provider: spec.id,
+    authorized: false,
+    running: false,
+    output: session?.output ?? "",
+  };
+  if (session) {
+    result.running = session.exitCode === null;
+    if (session.qrPath && existsSync(session.qrPath)) {
+      result.qrDataUrl = pngDataUrl(session.qrPath);
+    }
+  }
+  if (spec.authArgs) {
+    try {
+      const data = await runner.runJson(spec.authArgs, { bin: opts.bin });
+      result.auth = data;
+      result.authorized = authorizedOf(data);
+    } catch (e) {
+      result.authError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  return result;
+}
+
+/** 结束并清理登录会话。 */
+export function stopLogin(provider: string): boolean {
+  const session = sessions.get(provider);
+  if (!session) return false;
+  if (session.timer) clearTimeout(session.timer);
+  try {
+    session.child.kill("SIGTERM");
+  } catch {
+    /* ignore */
+  }
+  sessions.delete(provider);
+  return true;
+}
+
+/** 把各种 CLI 的认证输出归一化为布尔值。 */
+export function authorizedOf(data: unknown): boolean {
+  if (typeof data === "string") {
+    const text = data.trim().toLowerCase();
+    return text === "authorized" || text === "ok" || text === "true";
+  }
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    for (const key of ["authenticated", "authorized", "authorized_status", "logged_in", "success"]) {
+      const value = record[key];
+      if (typeof value === "boolean") return value;
+      if (typeof value === "string") return value.toLowerCase() === "authorized" || value === "true";
+    }
+    // wecom-cli 的 auth show 可能包一层 results
+    const nested = record.results ?? record.result;
+    if (nested !== undefined) return authorizedOf(nested);
+  }
+  return false;
+}
+
+async function snapshot(spec: ImProviderSpec, session: LiveSession): Promise<LoginSnapshot> {
+  const snap: LoginSnapshot = {
+    provider: spec.id,
+    displayName: spec.displayName,
+    running: session.exitCode === null,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    exitCode: session.exitCode,
+    output: session.output,
+  };
+  if (session.qrPath && existsSync(session.qrPath)) {
+    snap.qrPath = session.qrPath;
+    snap.qrDataUrl = pngDataUrl(session.qrPath);
+  }
+  return snap;
+}
+
+function pngDataUrl(path: string): string | undefined {
+  try {
+    const bytes = readFileSync(path);
+    return `data:image/png;base64,${bytes.toString("base64")}`;
+  } catch {
+    return undefined;
+  }
+}

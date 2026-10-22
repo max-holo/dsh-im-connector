@@ -60,8 +60,9 @@ send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
 const tools = await waitFor(2);
 const names = tools.result.tools.map((t) => t.name);
 console.log(`tools/list returned ${names.length} tool(s): ${names.join(", ")}`);
-if (names.length !== 2 || !names.includes("run") || !names.includes("info")) {
-  console.error(`FAIL: expected "run" and "info" tools`);
+const required = ["run", "info", "login", "login_status"];
+if (names.length !== required.length || !required.every((n) => names.includes(n))) {
+  console.error(`FAIL: expected ${required.join(", ")} tools`);
   child.kill();
   process.exit(1);
 }
