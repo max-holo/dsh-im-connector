@@ -14,7 +14,7 @@ plugin_manager install_bundle  target: im-connector
 
 ## 手工安装（已有包或本地调试）
 
-把本目录复制到任意位置，直接 `plugin_manager install_bundle`（target 指向该目录）。patch 用的是官方 stdio 形式：
+把本目录复制到任意位置，直接 `plugin_manager install_bundle`（target 指向该目录）。patch 用的是官方 stdio 形式，但**用 `node` 直接运行包内 server**（不走 `npx`，避免 Windows 下 Node 无法用管道 spawn `.cmd` shim 的问题）：
 
 ```yaml
 - insert:
@@ -23,26 +23,17 @@ plugin_manager install_bundle  target: im-connector
       config:
         serverName: im
         transport: stdio
-        command: npx
-        args: ['-y', 'im-connector']
+        command: !!js process.execPath
+        args:
+          - !!js '`${ctx.get("profileContext").dir}/node_modules/im-connector/dist/mcp/server.js`'
         failOnStartupError: true
 ```
 
 要点：
-- `command: npx` 跨平台可用（MCP SDK 的 stdio 传输基于 cross-spawn，Windows 能解析 `npx.cmd`）。
-- **不需要配 env**：`im-connector` 会通过 `npm root -g` 自动解析 `dws` / `wecom-cli` 的 bin 脚本。需要覆盖时再加 env，且**不要把凭据写进 patch**（可用 Loader 的 `!!js process.env.X` 引用环境变量）。
+- `command: !!js process.execPath`：用运行 DSH 的同一个 node，跨平台；`args` 通过 Loader 的 `profileContext.dir` 定位到 **profile 的 node_modules 里安装的包**，无需绝对路径、无需 npx、无需全局安装。
+- **不需要配 env**：`im-connector` 会通过包内 node_modules / `npm root -g` 自动解析 `dws` / `wecom-cli` 的 bin 脚本。需要覆盖时再加 env，且**不要把凭据写进 patch**（可用 `!!js process.env.X` 引用环境变量）。
 - `failOnStartupError: true`：连接失败时让该行激活失败，便于发现问题（官方模板同款）。
 - 对照官方 `templates/mcp/`：manifest 只需 name/version/`dsh.bundle.patch`（配置型 bundle 无 Host/Client 入口文件），display 元数据走 `locale/*.json` + `icon.svg`。
-
-> ⚠️ 个别 Windows 环境下 `npx` 转发 stdio 到本包 server 不稳定（`npx --version` 与其它包正常，但管道下 MCP 握手被关闭）。遇到这种情况改用 node + 绝对路径：
-
-```yaml
-      config:
-        serverName: im
-        transport: stdio
-        command: node
-        args: ['<npm root -g>/im-connector/dist/mcp/server.js']
-```
 
 ## 验证
 

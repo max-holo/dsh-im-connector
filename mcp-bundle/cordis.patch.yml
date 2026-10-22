@@ -4,6 +4,7 @@
       config:
         serverName: im
         transport: stdio
-        command: npx
-        args: ['-y', 'im-connector']
+        command: !!js process.execPath
+        args:
+          - !!js '`${ctx.get("profileContext").dir}/node_modules/im-connector/dist/mcp/server.js`'
         failOnStartupError: true
