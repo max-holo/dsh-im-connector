@@ -34,6 +34,16 @@ plugin_manager install_bundle  target: im-connector
 - `failOnStartupError: true`：连接失败时让该行激活失败，便于发现问题（官方模板同款）。
 - 对照官方 `templates/mcp/`：manifest 只需 name/version/`dsh.bundle.patch`（配置型 bundle 无 Host/Client 入口文件），display 元数据走 `locale/*.json` + `icon.svg`。
 
+> ⚠️ 个别 Windows 环境下 `npx` 转发 stdio 到本包 server 不稳定（`npx --version` 与其它包正常，但管道下 MCP 握手被关闭）。遇到这种情况改用 node + 绝对路径：
+
+```yaml
+      config:
+        serverName: im
+        transport: stdio
+        command: node
+        args: ['<npm root -g>/im-connector/dist/mcp/server.js']
+```
+
 ## 验证
 
 安装后在会话里调用 `mcp__im__run`（例如 `{ provider: "dingtalk", args: ["contact", "+me"] }`）确认连接可用。
