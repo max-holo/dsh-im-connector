@@ -6,10 +6,17 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./locale/*.json": "./mcp-bundle/locale/*.json",
+    "./icon": "./mcp-bundle/icon.svg"
   },
   "bin": {
     "im-connector": "./dist/mcp/server.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./mcp-bundle/cordis.patch.yml"
+    }
   },
   "files": [
     "dist",

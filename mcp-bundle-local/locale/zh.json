@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "IM 连接器",
+    "description": "统一 IM 透传：钉钉（dws）与企业微信（wecom-cli），可扩展飞书、Discord 等平台。"
+  }
+}

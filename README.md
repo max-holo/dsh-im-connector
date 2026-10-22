@@ -82,7 +82,13 @@ npx -y im-connector
 
 > `env` 可选：不填时连接器会自动通过 `npm root -g` 解析两个 CLI；填了更稳（规避 Windows shim）。
 
-DSH 用户：`mcp-bundle/` 里是现成的连接 bundle，把里面的路径改成你机器上的实际路径后用 `plugin_manager install_bundle` 安装即可（详见 `mcp-bundle/README.md`）。
+DSH 用户：本包**同时是 DSH 的 MCP 连接 bundle**（`package.json` 里声明了 `dsh.bundle.patch`），一条命令完成"装包 + 注册 MCP 连接"：
+
+```
+plugin_manager install_bundle  target: im-connector
+```
+
+安装后工具名为 `mcp__im__run`。细节与手工安装方式见 `mcp-bundle/README.md`。
 
 ## 前置条件
 
@@ -105,10 +111,25 @@ pnpm install
 pnpm verify    # typecheck + 测试 + build + MCP 冒烟
 ```
 
-## 接入 DSH（MCP bundle）
+## 接入 DSH（官方推荐路径）
 
-- bundle 目录：`mcp-bundle/`，patch 里 `serverName: im`、`transport: stdio`，`env` 用绝对路径指到 `dws.js` 与 `wecom.js`。
-- 安装：`plugin_manager install_bundle`，`target` 为 `mcp-bundle` 绝对路径；改 bundle 后重新 `install_bundle` 覆盖即可。
+按 DSH 官方 `references/mcp-bundle.md` 的做法：**配置型 bundle**（只插入一条 `@deepseek-ai/dsh-mcp-client` 行，无 Host/Client 入口文件），display 元数据用 `locale/*.json` + `icon.svg`，patch 用官方 stdio 形式：
+
+```yaml
+- insert:
+    - id: im-connector-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: im
+        transport: stdio
+        command: npx
+        args: ['-y', 'im-connector']
+        failOnStartupError: true
+```
+
+- 推荐安装：`plugin_manager install_bundle  target: im-connector`（包内已声明 `dsh.bundle.patch`，一步完成）
+- 手工安装：把 `mcp-bundle/` 复制到任意目录后 `install_bundle` 指向该目录
+- 不需要写死路径或凭据（`npx` 跨平台；凭据保持在两个 CLI 自己的登录态里，env 覆盖用 Loader `!!js`）
 
 ## 使用
 

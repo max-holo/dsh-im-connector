@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "IM Connector",
+    "description": "Unified IM passthrough for DingTalk (dws) and WeCom (wecom-cli); extensible to Feishu, Discord and more."
+  }
+}

@@ -4,10 +4,6 @@
       config:
         serverName: im
         transport: stdio
-        command: 'D:\software_setup\nodejs\node.exe'
-        args:
-          - 'D:\dingtalk\dist\mcp\server.js'
-        env:
-          DINGTALK_DWS_BIN: 'D:\software_setup\nodejs\node_modules\dingtalk-workspace-cli\bin\dws.js'
-          WECOM_CLI_BIN: 'D:\software_setup\nodejs\node_modules\@wecom\cli\bin\wecom.js'
+        command: npx
+        args: ['-y', 'im-connector']
         failOnStartupError: true
