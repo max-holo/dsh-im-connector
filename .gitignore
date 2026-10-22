@@ -7,3 +7,6 @@ coverage/
 *.log
 .dingtalk-capture.jsonl
 *.tsbuildinfo
+
+vendor/dws/win32-x64/
+

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ImProviderSpec } from "../providers/types.js";
 import { CliError, parseErrorEnvelope } from "./errors.js";
 
@@ -151,11 +152,11 @@ export class CliRunner {
     if (bin !== this.spec.bin && existsSync(bin)) {
       return { command: bin, prefix: [], shell: false };
     }
-    // 3) 随包安装的 CLI（optionalDependencies 里的依赖，开箱即用）
+    // 3) 随包携带的 CLI 二进制（如 vendor/dws/win32-x64/dws.exe，开箱即用）
     if (bin === this.spec.bin) {
-      const local = localCliScript(this.spec);
-      if (local) {
-        return { command: process.execPath, prefix: [local], shell: false };
+      const bundled = bundledCliExecutable(this.spec);
+      if (bundled) {
+        return { command: bundled, prefix: [], shell: false };
       }
       // 4) 回退：npm 全局安装的 CLI
       const globalRoot = await npmGlobalRoot();
@@ -176,24 +177,26 @@ export class CliRunner {
   }
 }
 
+/** 包根目录（dist/cli → 包根；源码运行时为仓库根）。 */
+function packageRoot(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
+
+/**
+ * 解析随包携带的 CLI 可执行文件：`<包根>/<bundledCliDir>/<platform>-<arch>/<exe>`。
+ * 找不到（平台未携带）返回 undefined，由全局安装或 shell 回退。
+ */
+function bundledCliExecutable(spec: ImProviderSpec): string | undefined {
+  if (spec.bundledCliDir === undefined) return undefined;
+  const exe = process.platform === "win32" ? `${spec.bin}.exe` : spec.bin;
+  const candidate = join(packageRoot(), spec.bundledCliDir, `${process.platform}-${process.arch}`, exe);
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 /**
  * 解析随包安装的 CLI 脚本（包内 node_modules，如 optionalDependencies）。
  * 返回可直接用 `node <script>` 执行的脚本路径；找不到返回 undefined。
  */
-function localCliScript(spec: ImProviderSpec): string | undefined {
-  try {
-    const require = createRequire(import.meta.url);
-    const pkgJson = require.resolve(`${spec.npmPackage}/package.json`);
-    const pkgDir = dirname(pkgJson);
-    // binScript = "<npmPackage>/bin/xxx.js" → 相对包目录的脚本路径
-    const rel = spec.binScript.slice(spec.npmPackage.length + 1);
-    const script = join(pkgDir, rel);
-    if (existsSync(script)) return script;
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 /** 通过包 manifest 的 bin 字段定位脚本（兼容 binScript 与实际 bin 布局不同的情况）。 */
 async function cliScriptFromManifest(spec: ImProviderSpec): Promise<string | undefined> {

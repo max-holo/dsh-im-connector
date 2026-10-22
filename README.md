@@ -7,10 +7,9 @@
 ## 前置条件
 
 - Node.js >= 18
-- 两个命令行工具（dws / wecom-cli）**已随包一起安装**（可选依赖），无需单独安装
+- **无需单独安装 CLI**：钉钉 `dws` 的 Windows x64 可执行文件**已内置在包内**（`vendor/dws/win32-x64/dws.exe`，v1.0.65，Apache-2.0）；企业微信 `wecom-cli` 通过可选依赖自动安装
+- 其它平台（Linux / macOS / Windows arm64）：`npm i -g dingtalk-workspace-cli` 后会被自动使用
 - **登录一次即可**（凭据保存在 CLI 自己的本地登录态，本包不接触凭据）——见下方「登录」
-
-> 使用 pnpm 安装时，若提示 CLI 不可用，允许依赖的安装脚本（`pnpm approve-builds`）或手动 `npm i -g dingtalk-workspace-cli @wecom/cli` 即可。
 
 ## 安装
 
@@ -19,7 +18,7 @@ npx -y im-connector          # 直接用，无需安装
 npm i -g im-connector        # 或全局安装
 ```
 
-> 注意：首次安装会下载两个 CLI（dws 约 130MB），之后无需再装。
+> 安装体积约 20MB（只含 Windows 版 dws 二进制 + 企业微信 CLI），不再是原来的 130MB；也不需要 pnpm 允许任何安装脚本。
 
 ## 登录（扫码即可，不用终端）
 

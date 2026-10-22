@@ -9,6 +9,7 @@ export const dingtalk: ImProviderSpec = {
   binScript: "dingtalk-workspace-cli/bin/dws.js",
   formatArgs: ["--format", "json"],
   envBin: "DINGTALK_DWS_BIN",
+  bundledCliDir: "vendor/dws",
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   loginArgs: ["auth", "login", "--recommend"],

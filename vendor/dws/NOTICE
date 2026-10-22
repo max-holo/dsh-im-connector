@@ -1,0 +1,14 @@
+NOTICE — bundled third-party binary
+
+This package bundles the Windows x64 executable of:
+
+  dws (DingTalk Workspace CLI) v1.0.65
+  https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli
+  Licensed under the Apache License, Version 2.0 (see ./LICENSE).
+
+The binary is redistributed unmodified as `win32-x64/dws.exe`.
+Copyright belongs to the upstream dws project and its contributors.
+
+If you are on another platform (Linux / macOS / Windows arm64), install
+dws yourself (`npm i -g dingtalk-workspace-cli`) and it will be picked up
+from PATH / the npm global root.

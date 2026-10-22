@@ -17,6 +17,8 @@ export interface ImProviderSpec {
   formatArgs: string[];
   /** 覆盖 bin 的环境变量名（可选），如 "DINGTALK_DWS_BIN"。 */
   envBin?: string;
+  /** 随包携带的 CLI 二进制目录（相对包根），按 `<platform>-<arch>/` 子目录查找，如 "vendor/dws"。 */
+  bundledCliDir?: string;
   /** 查询 CLI 版本的原始参数（不追加 formatArgs），如 ["--version"]。 */
   versionArgs?: string[];
   /** 查询登录状态的命令（走 JSON 输出），如 ["auth","status"]。 */
