@@ -8,6 +8,39 @@ DSH Agent ── mcp__im__run { provider, args } ──▶ dist/mcp/server.js
                 └─ provider=wecom    ──▶ wecom-cli ──▶ 企业微信
 ```
 
+## 定位：Agent 侧集成（让机器人在渠道里干活）
+
+本连接器只负责**「Agent → 渠道」方向**：Agent 通过 MCP 工具调用 dws / wecom-cli，让机器人在钉钉/企微里完成实际工作——发消息、写日志/日报、建待办、查日程、处理审批等。
+
+**渠道 → Agent 方向**（在群里/私聊里跟机器人对话）由独立的 `dsh-im` 插件负责，不在本连接器的范围内。
+
+## 典型用法（让机器人在渠道里干活）
+
+```json
+// 发消息到群 / 私聊
+{ "provider": "dingtalk", "args": ["chat", "+messages-send", "--group", "<openConversationId>", "--markdown", "今天 18:00 前提交周报", "--yes"] }
+{ "provider": "dingtalk", "args": ["chat", "+messages-send", "--user", "<userId>", "--markdown", "私聊通知", "--yes"] }
+
+// 写/提交日志（日报周报）
+{ "provider": "dingtalk", "args": ["report", "+create", "--template", "日报", "--content", "...", "--yes"] }
+{ "provider": "dingtalk", "args": ["report", "+my", "--type", "日报"] }
+
+// 待办
+{ "provider": "dingtalk", "args": ["todo", "+create", "--title", "整理今日测试报告", "--due", "2026-10-23 18:00"] }
+{ "provider": "dingtalk", "args": ["todo", "+get-my-tasks"] }
+
+// 日程 / 审批 / 通讯录
+{ "provider": "dingtalk", "args": ["calendar", "+today"] }
+{ "provider": "dingtalk", "args": ["oa", "approval", "list-pending"] }
+{ "provider": "dingtalk", "args": ["contact", "+me"] }
+
+// 企业微信
+{ "provider": "wecom", "args": ["contact", "users", "search", "--keywords", "张三"] }
+{ "provider": "wecom", "args": ["message", "send", "--chat-id", "<id>", "--msg-type", "text", "--text", "{\"content\":\"通知内容\"}"] }
+```
+
+写操作需用户明确意图；不确定时先用 `--dry-run` 预览（两平台都支持）。
+
 ## 设计核心：Provider 注册表
 
 每个 IM 平台只是 `src/providers/*.ts` 里的一条规格（`ImProviderSpec`），描述：
@@ -21,6 +54,35 @@ DSH Agent ── mcp__im__run { provider, args } ──▶ dist/mcp/server.js
 2. 在 `src/providers/registry.ts` 的 `providers` 数组里追加它。
 
 MCP 工具的 `provider` 枚举与描述会**自动**从注册表生成，无需改其它代码。
+
+## 快速开始（npm）
+
+```bash
+npm i -g im-connector        # 全局安装（提供 im-connector 命令）
+# 或直接用 npx（无需安装）：
+npx -y im-connector
+```
+
+`im-connector` 是一个 **stdio MCP server**：任何 MCP 客户端（DSH / Claude Desktop / 其它 Agent）都可以把它注册成 MCP 连接。配置示例：
+
+```json
+{
+  "mcpServers": {
+    "im": {
+      "command": "npx",
+      "args": ["-y", "im-connector"],
+      "env": {
+        "DINGTALK_DWS_BIN": "<npm root -g>/dingtalk-workspace-cli/bin/dws.js",
+        "WECOM_CLI_BIN": "<npm root -g>/@wecom/cli/bin/wecom.js"
+      }
+    }
+  }
+}
+```
+
+> `env` 可选：不填时连接器会自动通过 `npm root -g` 解析两个 CLI；填了更稳（规避 Windows shim）。
+
+DSH 用户：`mcp-bundle/` 里是现成的连接 bundle，把里面的路径改成你机器上的实际路径后用 `plugin_manager install_bundle` 安装即可（详见 `mcp-bundle/README.md`）。
 
 ## 前置条件
 
@@ -68,14 +130,17 @@ pnpm verify    # typecheck + 测试 + build + MCP 冒烟
 
 写操作（发消息/提交/审批等）需用户明确意图，必要时加 `--yes`（钉钉）或先用 `--dry-run` 预览（两平台都支持 `--dry-run`）。
 
-## npm 发布
+## 发布（维护者）
 
 ```bash
-pnpm build
-npm publish --access public    # 发布前把 package.json 的 name 改成你的 scope（im-connector 大概率已占用）
+npm login          # 首次发布前登录（已登录则跳过）
+pnpm verify        # typecheck + 测试 + build + MCP 冒烟（prepublishOnly 也会跑）
+npm publish        # 发布到 npm（publishConfig.access=public）
 ```
 
-已就绪：`package.json`（name/version/bin/files/types）、`LICENSE`、`README.md`；`files` 只含 `dist`。
+发布内容（`files`）：`dist/`（编译产物 + shebang 入口）、`mcp-bundle/`（DSH 连接 bundle）、`README.md`、`LICENSE`。
+
+发布前可用 `npm pack --dry-run` 查看实际打包清单。
 
 ## 目录结构
 
