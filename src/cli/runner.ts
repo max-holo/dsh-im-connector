@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ImProviderSpec } from "../providers/types.js";
@@ -35,10 +35,7 @@ interface LaunchSpec {
  * 非零退出时映射错误信封为 CliError。
  */
 export class CliRunner {
-  constructor(
-    private readonly spec: ImProviderSpec,
-    private readonly opts?: { bin?: string },
-  ) {}
+  constructor(private readonly spec: ImProviderSpec) {}
 
   get providerId(): string {
     return this.spec.id;
@@ -117,83 +114,9 @@ export class CliRunner {
     });
   }
 
-  /**
-   * 以 NDJSON 流式执行（长连接监听用）。逐行把 stdout 内容交给 onLine；
-   * 返回 { stop(), done } —— stop 优雅停止（Windows 整树终止），done 在进程退出或 stop 后 resolve。
-   * 不追加任何 format 参数，调用方自行传入（如 dws 的 --format ndjson）。
-   */
-  async stream(
-    args: string[],
-    onLine: (line: string) => void,
-    opts?: CliRunOptions,
-  ): Promise<{ stop: () => void; done: Promise<void> }> {
-    const spec = await this.launch(opts?.bin);
-    const child = spawn(spec.command, [...spec.prefix, ...args], {
-      shell: spec.shell,
-      cwd: opts?.cwd,
-      env: { ...process.env, ...opts?.env },
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    let resolveDone!: () => void;
-    const done = new Promise<void>((r) => {
-      resolveDone = r;
-    });
-    let buffer = "";
-    let stderrBuf = "";
-    child.stdout.on("data", (d: Buffer) => {
-      buffer += d.toString("utf8");
-      let idx: number;
-      while ((idx = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, idx).replace(/\r$/, "");
-        buffer = buffer.slice(idx + 1);
-        if (line.trim()) onLine(line);
-      }
-    });
-    child.stderr.on("data", (d: Buffer) => {
-      stderrBuf += d.toString("utf8");
-    });
-    child.on("exit", (code) => {
-      if (code !== 0 && code !== null && stderrBuf.trim()) {
-        onLine(`\u0000stderr:${stderrBuf.trim()}`);
-      }
-      resolveDone();
-    });
-    if (opts?.signal) {
-      opts.signal.addEventListener(
-        "abort",
-        () => {
-          try {
-            child.kill("SIGTERM");
-          } catch {
-            /* ignore */
-          }
-        },
-        { once: true },
-      );
-    }
-    return {
-      stop: () => {
-        try {
-          child.stdin.end();
-          if (process.platform === "win32" && child.pid) {
-            // dws 的 listen 会 fork 总线子进程，需整树终止（Windows）。
-            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-          } else {
-            child.kill("SIGTERM");
-          }
-        } catch {
-          /* ignore */
-        }
-        resolveDone();
-      },
-      done,
-    };
-  }
-
   private async launch(binOverride?: string): Promise<LaunchSpec> {
     const env = process.env[this.spec.envBin ?? ""]?.trim();
-    const bin = binOverride?.trim() || this.opts?.bin?.trim() || env || this.spec.bin;
+    const bin = binOverride?.trim() || env || this.spec.bin;
     // 1) 显式 node 脚本
     if (bin !== this.spec.bin && /\.(c?js|mjs)$/i.test(bin) && existsSync(bin)) {
       return { command: process.execPath, prefix: [bin], shell: false };

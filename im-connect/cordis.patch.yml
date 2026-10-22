@@ -1,4 +1,0 @@
-- insert:
-    - id: im-connect
-      name: '@local/im-connect'
-      config: {}
