@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CliRunner } from "../cli/runner.js";
@@ -26,6 +26,8 @@ export interface LoginStatusResult {
   provider: string;
   authorized: boolean;
   running: boolean;
+  /** 登录进程退出码（未结束时为 null）。 */
+  exitCode: number | null;
   /** auth 查询的原始结果（JSON 或文本）。 */
   auth?: unknown;
   authError?: string;
@@ -116,10 +118,10 @@ export async function startLogin(
     }
   }, LOGIN_TIMEOUT_MS);
 
-  // 企业微信：等待二维码 PNG 写盘（最多 QR_WAIT_MS）
+  // 企业微信：等待二维码 PNG 写盘并写完（最多 QR_WAIT_MS）
   if (qrPath) {
     const deadline = Date.now() + QR_WAIT_MS;
-    while (Date.now() < deadline && !existsSync(qrPath) && session.exitCode === null) {
+    while (Date.now() < deadline && !hasNonEmptyFile(qrPath) && session.exitCode === null) {
       await new Promise((r) => setTimeout(r, 200));
     }
   }
@@ -138,6 +140,7 @@ export async function loginStatus(
     provider: spec.id,
     authorized: false,
     running: false,
+    exitCode: session?.exitCode ?? null,
     output: session?.output ?? "",
   };
   if (session) {
@@ -212,8 +215,18 @@ async function snapshot(spec: ImProviderSpec, session: LiveSession): Promise<Log
 function pngDataUrl(path: string): string | undefined {
   try {
     const bytes = readFileSync(path);
+    if (bytes.length === 0) return undefined;
     return `data:image/png;base64,${bytes.toString("base64")}`;
   } catch {
     return undefined;
+  }
+}
+
+/** PNG 是否已写盘且写完（CLI 会先创建空文件再写入内容）。 */
+function hasNonEmptyFile(path: string): boolean {
+  try {
+    return statSync(path).size > 0;
+  } catch {
+    return false;
   }
 }

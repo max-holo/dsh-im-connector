@@ -219,8 +219,15 @@ export function buildMcpServer(options: McpServerOptions = {}): Server {
                 text: JSON.stringify(
                   {
                     ...status,
-                    authorized: status.authorized,
-                    hint: status.authorized ? "已登录，可以直接使用 run 工具。" : "尚未登录；请调用 login 获取二维码/打开授权页。",
+                    hint: status.authorized
+                      ? "已登录，可以直接使用 run 工具。"
+                      : status.running
+                        ? "登录会话进行中：请扫码/完成浏览器授权后再次查询。"
+                        : status.exitCode === 0
+                          ? "授权流程已完成（exitCode=0），但 auth 查询仍未通过；请检查 CLI 登录态或重新 login。"
+                          : status.exitCode === null
+                            ? "尚未发起登录；请调用 login 获取二维码/打开授权页。"
+                            : `登录流程已结束（exitCode=${status.exitCode}），未成功；请重新调用 login。`,
                   },
                   null,
                   2,
