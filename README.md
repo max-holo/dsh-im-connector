@@ -72,11 +72,30 @@ Agent 调用 `mcp__im__run`，参数是 `{ provider, args }`，`args` 就是对�
 
 完整命令见各 CLI 的 `--help`（如 `dws chat --help`、`wecom-cli message --help`）。
 
+## 自检
+
+调用 `info` 工具（无参数）返回每个平台的 CLI 版本、登录状态与实际可执行入口：
+
+```json
+{
+  "providers": [
+    {
+      "id": "dingtalk",
+      "displayName": "钉钉",
+      "version": "dws version v1.0.65 (...)",
+      "resolved": "<npm>/dingtalk-workspace-cli/bin/dws.js",
+      "auth": { "authenticated": true, "corp_name": "...", ... }
+    },
+    { "id": "wecom", "version": "wecom-cli 1.3.4", "auth": "authorized" }
+  ]
+}
+```
+
 ## 说明
 
 - **写操作**（发消息、提交审批等）请先让 Agent 确认意图；不确定时用 `--dry-run` 预览（两平台都支持）
 - 参数会原样透传给 CLI，返回其 JSON 输出
-- 支持的 provider：`dingtalk`、`wecom`
+- 支持的 provider：`dingtalk`（dws，24 个服务域 + `api`/`aicard`/`audit` 等）、`wecom`（wecom-cli，`--schema`/`--page-count`/`--dry-run`）
 
 ## 开发
 

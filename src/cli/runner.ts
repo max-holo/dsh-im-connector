@@ -48,13 +48,33 @@ export class CliRunner {
     return exec.data;
   }
 
+  /** 运行命令（追加 provider 的 formatArgs）。 */
   async run(args: string[], opts?: CliRunOptions): Promise<CliExecution> {
-    const spec = await this.launch(opts?.bin);
-    const finalArgs = [...spec.prefix, ...args, ...this.spec.formatArgs];
-    const command = `${this.spec.bin} ${args.join(" ")}`;
+    return this.execute(args, [...args, ...this.spec.formatArgs], opts);
+  }
+
+  /** 运行原始命令（不追加 formatArgs，用于 --version 等非业务查询）。 */
+  async runRaw(args: string[], opts?: CliRunOptions): Promise<CliExecution> {
+    return this.execute(args, args, opts);
+  }
+
+  /** 解析实际使用的 CLI 入口（脚本路径或命令名），用于诊断。 */
+  async resolveScript(binOverride?: string): Promise<string> {
+    const launch = await this.launch(binOverride);
+    return launch.shell ? launch.command : (launch.prefix[0] ?? launch.command);
+  }
+
+  private async execute(
+    displayArgs: string[],
+    cliArgs: string[],
+    opts?: CliRunOptions,
+  ): Promise<CliExecution> {
+    const launch = await this.launch(opts?.bin);
+    const finalArgs = [...launch.prefix, ...cliArgs];
+    const command = `${this.spec.bin} ${displayArgs.join(" ")}`;
     return new Promise<CliExecution>((resolve, reject) => {
-      const child = spawn(spec.command, finalArgs, {
-        shell: spec.shell,
+      const child = spawn(launch.command, finalArgs, {
+        shell: launch.shell,
         cwd: opts?.cwd,
         env: { ...process.env, ...opts?.env },
         stdio: ["ignore", "pipe", "pipe"],
@@ -82,7 +102,7 @@ export class CliRunner {
       child.on("error", (e) => {
         reject(
           new CliError({
-            message: `Failed to launch ${this.spec.bin} (${spec.command}): ${e.message}`,
+            message: `Failed to launch ${this.spec.bin} (${launch.command}): ${e.message}`,
             command,
             retryable: true,
           }),

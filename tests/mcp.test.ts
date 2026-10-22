@@ -29,15 +29,31 @@ describe("unified IM MCP server", () => {
     await server.close();
   });
 
-  it("exposes one run tool with provider enum [dingtalk, wecom]", async () => {
+  it("exposes run + info tools with provider enum [dingtalk, wecom]", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(["run"]);
+    expect(tools.map((t) => t.name)).toEqual(["run", "info"]);
     const schema = tools[0].inputSchema as {
       required?: string[];
       properties?: Record<string, { enum?: string[] }>;
     };
     expect(schema.required).toEqual(["provider", "args"]);
     expect(schema.properties?.provider.enum).toEqual(["dingtalk", "wecom"]);
+  });
+
+  it("info reports per-provider version, auth status and resolved CLI path", async () => {
+    const result = await client.callTool({ name: "info", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(
+      parseText(result as { content?: Array<{ type: string; text?: string }> }),
+    ) as {
+      providers: Array<{ id: string; version?: string; auth?: unknown; resolved?: string }>;
+    };
+    expect(parsed.providers.map((p) => p.id)).toEqual(["dingtalk", "wecom"]);
+    for (const p of parsed.providers) {
+      expect(p.version).toBeDefined();
+      expect(p.auth).toBeDefined();
+      expect(p.resolved).toBe(FAKE);
+    }
   });
 
   it("routes dingtalk and appends --format json", async () => {

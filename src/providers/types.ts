@@ -17,6 +17,10 @@ export interface ImProviderSpec {
   formatArgs: string[];
   /** 覆盖 bin 的环境变量名（可选），如 "DINGTALK_DWS_BIN"。 */
   envBin?: string;
+  /** 查询 CLI 版本的原始参数（不追加 formatArgs），如 ["--version"]。 */
+  versionArgs?: string[];
+  /** 查询登录状态的命令（走 JSON 输出），如 ["auth","status"]。 */
+  authArgs?: string[];
   /** 展示在 MCP 工具描述里的示例命令（数组形式，便于模型理解）。 */
   examples: string[];
 }

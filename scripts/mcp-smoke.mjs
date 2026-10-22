@@ -1,5 +1,5 @@
 // MCP stdio 冒烟测试：启动编译后的 MCP server，走 initialize → tools/list。
-// 期望只有一个 `run` 透传工具。认证复用 dws 本地登录态，tools/list 不触发网络。
+// 期望 `run`（业务透传）与 `info`（版本/登录自检）两个工具。tools/list 不触发网络。
 // 用法：先 pnpm build，然后 node scripts/mcp-smoke.mjs
 import { spawn } from "node:child_process";
 
@@ -60,8 +60,8 @@ send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
 const tools = await waitFor(2);
 const names = tools.result.tools.map((t) => t.name);
 console.log(`tools/list returned ${names.length} tool(s): ${names.join(", ")}`);
-if (names.length !== 1 || names[0] !== "run") {
-  console.error(`FAIL: expected a single "run" tool`);
+if (names.length !== 2 || !names.includes("run") || !names.includes("info")) {
+  console.error(`FAIL: expected "run" and "info" tools`);
   child.kill();
   process.exit(1);
 }

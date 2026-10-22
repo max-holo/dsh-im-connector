@@ -9,6 +9,8 @@ export const dingtalk: ImProviderSpec = {
   binScript: "dingtalk-workspace-cli/bin/dws.js",
   formatArgs: ["--format", "json"],
   envBin: "DINGTALK_DWS_BIN",
+  versionArgs: ["--version"],
+  authArgs: ["auth", "status"],
   examples: [
     '["contact","+me"]',
     '["contact","+search-user","--query","张三"]',
@@ -20,5 +22,6 @@ export const dingtalk: ImProviderSpec = {
     '["doc","read","--node","<docId|url>"] / ["wiki","+space-list"]',
     '["chat","+chat-messages","--group","<群名|id>","--limit","20"] / ["chat","+search-msg","--query","<kw>"]',
     '写：["chat","+messages-send","--group","<cid>","--markdown","内容","--title","标题","--yes"]',
+    '其他服务域（dws --help 查看）：aicard / api / attendance / audit / contract / devapp / devdoc / ding / drive / hrbrain / live / mail / minutes / sheet / whiteboard / wiki …',
   ],
 };
