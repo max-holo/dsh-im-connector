@@ -18,48 +18,7 @@ if (process.env.FAKE_CLI_ERROR === "1") {
   process.exit(3);
 }
 
-if (process.env.FAKE_CLI_WECOM === "1") {
-  // 模拟 wecom-cli：groups / messages 返回不同负载（results_json 包裹）
-  if (args.includes("groups")) {
-    process.stdout.write(
-      JSON.stringify({ results_json: { data: { items: [{ chat_id: "g1", chat_name: "测试群" }] } } }),
-    );
-  } else if (args.includes("messages")) {
-    process.stdout.write(
-      JSON.stringify({
-        results_json: {
-          data: {
-            items: [
-              { msg_id: "m1", chat_id: "g1", sender_name: "张三", text: { content: "你好" } },
-              { msg_id: "m2", chat_id: "g1", sender_name: "李四", text: { content: "在吗" } },
-            ],
-          },
-        },
-      }),
-    );
-  } else {
-    process.stdout.write(JSON.stringify({ results_json: { data: { items: [] } } }));
-  }
-} else if (process.env.FAKE_CLI_STREAM === "1") {
-  const isDirect = args.includes("all-direct");
-  const isAllGroup = args.includes("all-group");
-  process.stdout.write(
-    JSON.stringify({
-      type: "event",
-      data: {
-        conversationId: isDirect ? "cid-d" : isAllGroup ? "cid-g" : "cid-9",
-        conversationType: isDirect ? "1" : "2",
-        senderStaffId: "u1",
-        senderNick: "张三",
-        msgtype: "text",
-        text: { content: isDirect ? "私聊你好" : isAllGroup ? "群里普通消息" : "帮我查下日程" },
-        isAtBot: !isDirect && !isAllGroup,
-      },
-    }) + "\n",
-  );
-  process.stdin.resume();
-  process.on("SIGTERM", () => process.exit(0));
-} else if (process.env.FAKE_CLI_PLAIN === "1") {
+if (process.env.FAKE_CLI_PLAIN === "1") {
   process.stdout.write("plain text, not json");
 } else {
   process.stdout.write(JSON.stringify({ ok: true, data: { args, marker: "fake-cli" } }));

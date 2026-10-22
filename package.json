@@ -11,7 +11,7 @@
     "./icon": "./mcp-bundle/icon.svg"
   },
   "bin": {
-    "im-connector": "./dist/mcp/server.js"
+    "im-connector": "dist/mcp/server.js"
   },
   "dsh": {
     "bundle": {
