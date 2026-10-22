@@ -249,6 +249,8 @@ export function buildMcpServer(options: McpServerOptions = {}): Server {
               running: login.running,
               exitCode: login.exitCode,
               qrPath: login.qrPath,
+              // 可直接粘贴到回复里的 Markdown 图片（DSH 聊天会把本地绝对路径渲染为内联图片）
+              markdown: login.qrPath ? `![${login.displayName}登录二维码](${login.qrPath.replace(/\\/g, "/")})` : undefined,
               outputTail: login.output.slice(-800),
               hint: login.qrDataUrl
                 ? "请用手机扫描二维码完成授权，然后调用 login_status 确认。"
