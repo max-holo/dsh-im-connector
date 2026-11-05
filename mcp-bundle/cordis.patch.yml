@@ -1,6 +1,8 @@
 # im-connector 组合补丁：
 # 1) im-connector-mcp：插入 @deepseek-ai/dsh-mcp-client 连接（MCP 工具入口）
 # 2) im-connector-client：插入本包的 host 行，使 dsh.client 的浏览器 toolview 生效
+#    行名用相对 patch 文件的路径（../dist/host.js）：Loader 以 patch 所在目录解析相对名，
+#    不依赖包的 exports 子路径解析（长驻进程里 Node 的 package.json 缓存会让包内子路径失效）。
 - insert:
     - id: im-connector-mcp
       name: '@deepseek-ai/dsh-mcp-client'
@@ -15,4 +17,4 @@
         expandTemplates: true
         failOnStartupError: true
     - id: im-connector-client
-      name: 'im-connector/host'
+      name: '../dist/host.js'

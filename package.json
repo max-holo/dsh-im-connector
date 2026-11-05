@@ -1,6 +1,6 @@
 {
   "name": "im-connector",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "MCP server that lets agents drive DingTalk (dws) and WeCom (wecom-cli) CLIs: send messages, write reports, create todos, query calendars and approvals. Ships MCP resources, server instructions, structured tool output, and an inline QR login row for the DSH Web UI.",
   "type": "module",
   "main": "./dist/index.js",
