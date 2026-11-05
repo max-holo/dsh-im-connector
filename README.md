@@ -70,8 +70,8 @@ plugin_manager install_bundle  target: im-connector
 本包在 npm 包内自带市场索引 `market/index.json`，把下面任一地址添加为 Discover 的 index 源即可搜索安装：
 
 ```
-https://cdn.jsdelivr.net/npm/im-connector@1.4.2/market/index.json
-https://registry.npmmirror.com/im-connector/1.4.2/files/market/index.json
+https://cdn.jsdelivr.net/npm/im-connector@latest/market/index.json
+https://unpkg.com/im-connector@latest/market/index.json
 ```
 
 ### 可选：用 DSH 凭据模板注入环境变量
