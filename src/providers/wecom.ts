@@ -11,7 +11,7 @@ export const wecom: ImProviderSpec = {
   envBin: "WECOM_CLI_BIN",
   versionArgs: ["--version"],
   authArgs: ["auth", "show", "--status"],
-  loginArgs: ["auth", "init", "--noninteractive"],
+  loginArgs: ["auth", "init", "--noninteractive", "--no-browser"],
   qrOutputFlag: "--output-qrcode",
   examples: [
     '["contact","users","search","--keywords","张三"]',

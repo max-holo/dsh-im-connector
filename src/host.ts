@@ -156,6 +156,7 @@ async function handleLoginStatus(req: HttpRequest, res: HttpResponse): Promise<v
       exitCode: status.exitCode,
       qrDataUrl: status.qrDataUrl,
       authError: status.authError,
+      outputTail: status.output.slice(-400),
     });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: errorMessage(error) });
