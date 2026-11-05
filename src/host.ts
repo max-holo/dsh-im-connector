@@ -3,14 +3,17 @@
  *
  * The MCP connection is inserted by the bundle patch; this row exists so the
  * package is a Loader entry (which lets the client-module system load the
- * `dsh.client` browser half) and it serves the read-only JSON routes the
- * settings page uses to show provider status and drive the login flow.
+ * `dsh.client` browser half) and it serves the JSON routes the settings page
+ * uses: provider status, login flow, resource browsing, and the user config.
  */
 
+import { createRequire } from "node:module";
 import { collectProviderInfo, providerCatalogue } from "./control/providers.js";
+import { configBinOverrides, configPath, loadConfig, saveConfig } from "./config/store.js";
 import { getProvider } from "./providers/registry.js";
 import { CliRunner } from "./cli/runner.js";
 import { loginStatus, startLogin } from "./login/session.js";
+import { readResourceText } from "./mcp/resources.js";
 
 export const name = "im-connector-host";
 
@@ -44,8 +47,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 读取 POST 的 JSON body（上限 64KB）。 */
-async function readJsonBody(req: HttpRequest): Promise<Record<string, unknown>> {
+/** 读取请求体（上限 64KB）。 */
+async function readBody(req: HttpRequest): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   await new Promise<void>((resolve, reject) => {
@@ -61,13 +64,27 @@ async function readJsonBody(req: HttpRequest): Promise<Record<string, unknown>> 
     req.on("end", () => resolve());
     req.on("error", (error: unknown) => reject(new Error(errorMessage(error))));
   });
-  const text = Buffer.concat(chunks).toString("utf8").trim();
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+
+async function readJsonBody(req: HttpRequest): Promise<Record<string, unknown>> {
+  const text = await readBody(req);
   if (text === "") return {};
   const parsed: unknown = JSON.parse(text);
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("request body must be a JSON object");
   }
   return parsed as Record<string, unknown>;
+}
+
+function packageVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const manifest = require("../package.json") as { version?: string };
+    return manifest.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** 把登录快照压成设置页需要的形状（含二维码 data URL）。 */
@@ -88,13 +105,14 @@ function loginPayload(snapshot: Awaited<ReturnType<typeof startLogin>>): Record<
 
 async function handleInfo(res: HttpResponse): Promise<void> {
   try {
+    const overrides = configBinOverrides();
     const providers = [];
     for (const entry of providerCatalogue()) {
       const spec = getProvider(entry.id);
       if (spec === undefined) continue;
-      providers.push(await collectProviderInfo(spec));
+      providers.push(await collectProviderInfo(spec, overrides[entry.id]));
     }
-    sendJson(res, 200, { ok: true, providers });
+    sendJson(res, 200, { ok: true, version: packageVersion(), providers });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: errorMessage(error) });
   }
@@ -110,7 +128,10 @@ async function handleLogin(req: HttpRequest, res: HttpResponse): Promise<void> {
       return;
     }
     const mode = body.mode === "device" ? "device" : "browser";
-    const snapshot = await startLogin(spec, new CliRunner(spec), { mode });
+    const snapshot = await startLogin(spec, new CliRunner(spec), {
+      mode,
+      bin: configBinOverrides()[spec.id],
+    });
     sendJson(res, 200, { ok: true, ...loginPayload(snapshot) });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: errorMessage(error) });
@@ -126,7 +147,7 @@ async function handleLoginStatus(req: HttpRequest, res: HttpResponse): Promise<v
       sendJson(res, 400, { ok: false, error: `unknown provider "${providerId}"` });
       return;
     }
-    const status = await loginStatus(spec, new CliRunner(spec));
+    const status = await loginStatus(spec, new CliRunner(spec), { bin: configBinOverrides()[spec.id] });
     sendJson(res, 200, {
       ok: true,
       provider: status.provider,
@@ -141,35 +162,51 @@ async function handleLoginStatus(req: HttpRequest, res: HttpResponse): Promise<v
   }
 }
 
+function handleConfig(req: HttpRequest, res: HttpResponse): void {
+  void (async () => {
+    try {
+      if (req.method === "PUT" || req.method === "POST") {
+        const body = await readJsonBody(req);
+        const saved = saveConfig(body);
+        sendJson(res, 200, { ok: true, config: saved, path: configPath() });
+        return;
+      }
+      sendJson(res, 200, { ok: true, config: loadConfig(), path: configPath() });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorMessage(error) });
+    }
+  })();
+}
+
+function handleResources(req: HttpRequest, res: HttpResponse): void {
+  void (async () => {
+    try {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      const uri = url.searchParams.get("uri") ?? "";
+      const entry = await readResourceText(uri, { binOverrides: configBinOverrides() });
+      if (entry === undefined) {
+        sendJson(res, 404, { ok: false, error: `unknown resource "${uri}"` });
+        return;
+      }
+      sendJson(res, 200, { ok: true, ...entry });
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: errorMessage(error) });
+    }
+  })();
+}
+
 export function apply(ctx: { get(name: string): unknown; effect(callback: () => void | (() => void)): unknown }): void {
   const server = ctx.get("webServer") as WebServer | undefined;
   if (server === undefined) return;
 
-  ctx.effect(() =>
-    server.register({
-      kind: "exact",
-      path: "/api/im-connector/info",
-      handler: (_req, res) => {
-        void handleInfo(res);
-      },
-    }),
-  );
-  ctx.effect(() =>
-    server.register({
-      kind: "exact",
-      path: "/api/im-connector/login",
-      handler: (req, res) => {
-        void handleLogin(req, res);
-      },
-    }),
-  );
-  ctx.effect(() =>
-    server.register({
-      kind: "exact",
-      path: "/api/im-connector/login-status",
-      handler: (req, res) => {
-        void handleLoginStatus(req, res);
-      },
-    }),
-  );
+  const routes: { path: string; handler: (req: HttpRequest, res: HttpResponse) => void }[] = [
+    { path: "/api/im-connector/info", handler: (_req, res) => { void handleInfo(res); } },
+    { path: "/api/im-connector/login", handler: (req, res) => { void handleLogin(req, res); } },
+    { path: "/api/im-connector/login-status", handler: (req, res) => { void handleLoginStatus(req, res); } },
+    { path: "/api/im-connector/config", handler: handleConfig },
+    { path: "/api/im-connector/resources", handler: handleResources },
+  ];
+  for (const route of routes) {
+    ctx.effect(() => server.register({ kind: "exact", path: route.path, handler: route.handler }));
+  }
 }

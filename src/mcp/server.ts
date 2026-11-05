@@ -10,6 +10,7 @@ import type { ImProviderSpec } from "../providers/types.js";
 import { CliRunner } from "../cli/runner.js";
 import { isCliError } from "../cli/errors.js";
 import { collectProviderInfo, type ProviderInfo } from "../control/providers.js";
+import { configBinOverrides } from "../config/store.js";
 import { loginStatus, startLogin } from "../login/session.js";
 import { buildInstructions } from "./instructions.js";
 import { registerResources } from "./resources.js";
@@ -310,7 +311,7 @@ export function buildMcpServer(options: McpServerOptions = {}): McpServer {
 }
 
 async function main(): Promise<void> {
-  const server = buildMcpServer();
+  const server = buildMcpServer({ binOverrides: configBinOverrides() });
   await server.connect(new StdioServerTransport());
 }
 
