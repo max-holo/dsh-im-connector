@@ -65,6 +65,15 @@ plugin_manager install_bundle  target: im-connector
 
 安装后工具名为 `mcp__im__run`（另有 `info` / `login` / `login_status`）。
 
+### 在 DSH 插件市场（Discover）中安装
+
+本包在 npm 包内自带市场索引 `market/index.json`，把下面任一地址添加为 Discover 的 index 源即可搜索安装：
+
+```
+https://cdn.jsdelivr.net/npm/im-connector@1.4.2/market/index.json
+https://registry.npmmirror.com/im-connector/1.4.2/files/market/index.json
+```
+
 ### 可选：用 DSH 凭据模板注入环境变量
 
 bundle patch 已开启 `expandTemplates`，需要给 CLI 传额外环境变量时可用 `${credential:REF}`，凭据不会出现在配置或对话里：
