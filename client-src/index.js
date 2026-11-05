@@ -114,20 +114,20 @@ function ProviderCard(props) {
     ),
   ]
 
-  // 登录中（钉钉等待浏览器、企微等待扫码）
+  // 登录中（钉钉等待浏览器、企微等待扫码）；二维码与提示不重复展示
   if (running && !session.error) {
-    children.push(React.createElement('div', { style: MUTED, key: 'waiting' },
-      session.hint || '等待授权完成…'))
-  }
-  // 企微二维码（仅登录进行中显示）
-  if (running && session.qrDataUrl) {
-    children.push(React.createElement('img', {
-      key: 'qr',
-      src: session.qrDataUrl,
-      alt: '登录二维码',
-      style: { width: '190px', height: '190px', borderRadius: '10px', background: '#fff', padding: '8px', alignSelf: 'flex-start' },
-    }))
-    children.push(React.createElement('div', { style: LABEL, key: 'qr-hint' }, '请用企业微信扫码'))
+    if (session.qrDataUrl) {
+      children.push(React.createElement('img', {
+        key: 'qr',
+        src: session.qrDataUrl,
+        alt: '登录二维码',
+        style: { width: '190px', height: '190px', borderRadius: '10px', background: '#fff', padding: '8px', alignSelf: 'flex-start' },
+      }))
+      children.push(React.createElement('div', { style: LABEL, key: 'qr-hint' }, '请用企业微信扫码'))
+    } else {
+      children.push(React.createElement('div', { style: MUTED, key: 'waiting' },
+        session.hint || '已打开浏览器，请在浏览器中完成授权'))
+    }
   }
   // 失败 / 中断：保留原因，不静默消失
   if (session && session.error) {
@@ -153,9 +153,9 @@ function ProviderCard(props) {
     React.createElement('button', {
       type: 'button',
       style: BUTTON_PRIMARY,
-      disabled: busy,
+      disabled: busy || running,
       onClick: () => props.onLogin(info.id),
-    }, busy ? '请稍候…' : authorized ? '重新登录' : '登录'),
+    }, busy ? '请稍候…' : running ? '等待授权…' : authorized ? '重新登录' : '登录'),
     React.createElement('button', {
       type: 'button',
       style: BUTTON,
@@ -187,7 +187,8 @@ function SettingsPage() {
     refresh()
   }, [refresh])
 
-  // 轮询进行中的登录：授权成功 → 清除并刷新；进程退出但未授权 → 保留原因（不静默清除）
+  // 轮询进行中的登录：先看会话是否仍在运行，再看授权结果。
+  // （authorized 由服务端按登录进程退出码判定；running 期间不收起二维码）
   React.useEffect(() => {
     const running = Object.keys(sessions).filter(key => sessions[key] && sessions[key].running)
     if (running.length === 0) return undefined
@@ -197,13 +198,15 @@ function SettingsPage() {
       for (const provider of running) {
         try {
           const data = await getJson(`/api/im-connector/login-status?provider=${encodeURIComponent(provider)}`)
-          if (data.authorized) {
+          if (data.running) {
+            // 仍在等待扫码 / 浏览器授权：保持二维码与提示
+          } else if (data.authorized) {
             setSessions(current => ({ ...current, [provider]: { done: '登录成功' } }))
             refresh()
             setTimeout(() => {
               setSessions(current => (current[provider] && current[provider].done ? { ...current, [provider]: undefined } : current))
             }, 4000)
-          } else if (!data.running) {
+          } else {
             const tail = typeof data.outputTail === 'string' ? data.outputTail.trim() : ''
             const reasonFromTail = (() => {
               const match = tail.match(/"message"\s*:\s*"([^"]+)"/)

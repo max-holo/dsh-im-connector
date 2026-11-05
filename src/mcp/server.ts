@@ -278,21 +278,24 @@ export function buildMcpServer(options: McpServerOptions = {}): McpServer {
       try {
         const runner = new CliRunner(spec);
         const status = await loginStatus(spec, runner, { bin: binOf(spec.id) });
-        const hint = status.authorized
-          ? "已登录，可以直接使用 run 工具。"
-          : status.running
-            ? "登录会话进行中：请扫码/完成浏览器授权后再次查询。"
-            : status.exitCode === 0
-              ? "授权流程已完成（exitCode=0），但 auth 查询仍未通过；请检查 CLI 登录态或重新 login。"
-              : status.exitCode === null
-                ? "尚未发起登录；请调用 login 获取二维码/打开授权页。"
-                : `登录流程已结束（exitCode=${status.exitCode}），未成功；请重新调用 login。`;
+        // 会话感知的授权判定：登录进程退出码优先（旧凭据仍有效时 auth 查询会立刻
+        // 返回 authorized，不能当作「本次扫码成功」的证据）。
+        const succeeded = status.exitCode === 0;
+        const failed = status.exitCode !== null && status.exitCode !== 0;
+        const authorized = failed ? false : succeeded ? true : status.authorized;
+        const hint = status.running
+          ? "登录会话进行中：请扫码/完成浏览器授权后再次查询。"
+          : authorized
+            ? "已登录，可以直接使用 run 工具。"
+            : status.exitCode === null
+              ? "尚未发起登录；请调用 login 获取二维码/打开授权页。"
+              : `登录流程已结束（exitCode=${status.exitCode}），未成功；请重新调用 login。`;
         return textResult([
-          { type: "text", text: JSON.stringify({ ...status, hint }, null, 2) },
+          { type: "text", text: JSON.stringify({ ...status, authorized, hint }, null, 2) },
         ], {
           ok: true,
           provider: status.provider,
-          authorized: status.authorized,
+          authorized,
           running: status.running,
           ...(status.exitCode === null ? {} : { exitCode: status.exitCode }),
           ...(status.auth === undefined ? {} : { auth: status.auth }),

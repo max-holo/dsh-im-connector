@@ -148,10 +148,15 @@ async function handleLoginStatus(req: HttpRequest, res: HttpResponse): Promise<v
       return;
     }
     const status = await loginStatus(spec, new CliRunner(spec), { bin: configBinOverrides()[spec.id] });
+    // 会话感知的授权判定：登录进程退出码优先。
+    // 旧凭据仍有效时 auth 查询会立刻返回 authorized，不能当作「本次扫码成功」的证据；
+    // 会话失败时如实报未授权（平台徽标仍由 /info 的平台级查询展示）。
+    const succeeded = status.exitCode === 0;
+    const failed = status.exitCode !== null && status.exitCode !== 0;
     sendJson(res, 200, {
       ok: true,
       provider: status.provider,
-      authorized: status.authorized,
+      authorized: failed ? false : succeeded ? true : status.authorized,
       running: status.running,
       exitCode: status.exitCode,
       qrDataUrl: status.qrDataUrl,
