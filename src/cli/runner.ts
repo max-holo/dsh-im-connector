@@ -248,13 +248,18 @@ function parseWecomError(stdout: string): { errcode: number; message: string; hi
   }
 }
 
+/** 进程内缓存的 npm 全局根（解析一次即可；失败不缓存，下次重试）。 */
+let npmGlobalRootMemo: string | undefined;
+
 async function npmGlobalRoot(): Promise<string | null> {
+  if (npmGlobalRootMemo !== undefined) return npmGlobalRootMemo;
   try {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const run = promisify(execFile);
     const { stdout } = await run("npm", ["root", "-g"], { timeout: 10_000, windowsHide: true });
     const root = String(stdout).trim();
+    if (root !== "") npmGlobalRootMemo = root;
     return root || null;
   } catch {
     return null;

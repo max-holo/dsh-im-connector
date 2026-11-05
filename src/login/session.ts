@@ -148,6 +148,9 @@ export async function loginStatus(
     if (session.qrPath && existsSync(session.qrPath)) {
       result.qrDataUrl = pngDataUrl(session.qrPath);
     }
+    // 存在登录会话时不再拉起 CLI 查询 auth：等待扫码期间每 3 秒轮询一次，
+    // 逐次拉起 CLI 既慢又无意义；此场景下的授权判定由调用方按会话退出码推导。
+    return result;
   }
   if (spec.authArgs) {
     try {

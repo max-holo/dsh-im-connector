@@ -8,9 +8,10 @@
  */
 
 import { createRequire } from "node:module";
-import { collectProviderInfo, providerCatalogue } from "./control/providers.js";
+import { collectProviderInfo, providerCatalogue, type ProviderInfo } from "./control/providers.js";
 import { configBinOverrides, configPath, loadConfig, saveConfig } from "./config/store.js";
 import { getProvider } from "./providers/registry.js";
+import type { ImProviderSpec } from "./providers/types.js";
 import { CliRunner } from "./cli/runner.js";
 import { loginStatus, startLogin } from "./login/session.js";
 import { readResourceText } from "./mcp/resources.js";
@@ -103,15 +104,40 @@ function loginPayload(snapshot: Awaited<ReturnType<typeof startLogin>>): Record<
   };
 }
 
-async function handleInfo(res: HttpResponse): Promise<void> {
-  try {
+/** 平台检测结果的短缓存：设置页打开、chip 轮询、并发打开共用一次检测。 */
+const INFO_CACHE_TTL_MS = 30_000;
+let infoCache: { at: number; providers: ProviderInfo[] } | undefined;
+let infoInFlight: Promise<ProviderInfo[]> | undefined;
+
+function invalidateInfoCache(): void {
+  infoCache = undefined;
+}
+
+/** 并行检测全部平台（CLI 版本 / 入口 / 登录态），带 TTL 缓存与并发去重。 */
+async function detectProviders(): Promise<ProviderInfo[]> {
+  if (infoCache !== undefined && Date.now() - infoCache.at < INFO_CACHE_TTL_MS) return infoCache.providers;
+  if (infoInFlight !== undefined) return infoInFlight;
+  infoInFlight = (async () => {
     const overrides = configBinOverrides();
-    const providers = [];
-    for (const entry of providerCatalogue()) {
-      const spec = getProvider(entry.id);
-      if (spec === undefined) continue;
-      providers.push(await collectProviderInfo(spec, overrides[entry.id]));
-    }
+    const specs = providerCatalogue()
+      .map((entry) => getProvider(entry.id))
+      .filter((spec): spec is ImProviderSpec => spec !== undefined);
+    const providers = await Promise.all(specs.map((spec) => collectProviderInfo(spec, overrides[spec.id])));
+    infoCache = { at: Date.now(), providers };
+    return providers;
+  })();
+  try {
+    return await infoInFlight;
+  } finally {
+    infoInFlight = undefined;
+  }
+}
+
+async function handleInfo(req: HttpRequest, res: HttpResponse): Promise<void> {
+  try {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (url.searchParams.get("fresh") === "1") invalidateInfoCache();
+    const providers = await detectProviders();
     sendJson(res, 200, { ok: true, version: packageVersion(), providers });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: errorMessage(error) });
@@ -153,6 +179,7 @@ async function handleLoginStatus(req: HttpRequest, res: HttpResponse): Promise<v
     // 会话失败时如实报未授权（平台徽标仍由 /info 的平台级查询展示）。
     const succeeded = status.exitCode === 0;
     const failed = status.exitCode !== null && status.exitCode !== 0;
+    if (succeeded) invalidateInfoCache();
     sendJson(res, 200, {
       ok: true,
       provider: status.provider,
@@ -206,7 +233,7 @@ export function apply(ctx: { get(name: string): unknown; effect(callback: () => 
   if (server === undefined) return;
 
   const routes: { path: string; handler: (req: HttpRequest, res: HttpResponse) => void }[] = [
-    { path: "/api/im-connector/info", handler: (_req, res) => { void handleInfo(res); } },
+    { path: "/api/im-connector/info", handler: (req, res) => { void handleInfo(req, res); } },
     { path: "/api/im-connector/login", handler: (req, res) => { void handleLogin(req, res); } },
     { path: "/api/im-connector/login-status", handler: (req, res) => { void handleLoginStatus(req, res); } },
     { path: "/api/im-connector/config", handler: handleConfig },

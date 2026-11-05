@@ -86,6 +86,21 @@ const postJson = (url, body) => requestJson(url, {
   body: JSON.stringify(body),
 })
 
+// 平台检测的共享缓存（chip 与设置页共用）：TTL 内直接复用，避免重复检测。
+// fresh=true 时带 ?fresh=1 绕过服务端缓存强制重检。
+let sharedInfo = { at: 0, providers: [] }
+async function fetchInfo(fresh) {
+  if (!fresh && sharedInfo.providers.length > 0 && Date.now() - sharedInfo.at < 25000) {
+    return sharedInfo
+  }
+  const data = await getJson('/api/im-connector/info' + (fresh ? '?fresh=1' : ''))
+  sharedInfo = {
+    at: Date.now(),
+    providers: Array.isArray(data.providers) ? data.providers : [],
+  }
+  return sharedInfo
+}
+
 function authorizedOf(info) {
   if (!info || info.authError !== undefined) return false
   const auth = info.auth
@@ -170,13 +185,15 @@ function SettingsPage() {
   const [state, setState] = React.useState({ loading: true, error: '', providers: [] })
   const [sessions, setSessions] = React.useState({})
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async fresh => {
+    // 已有数据时保持卡片可见，不闪「检测中」；只有首次加载才显示检测态
+    setState(current => (current.providers.length > 0 ? current : { ...current, loading: true, error: '' }))
     try {
-      const data = await getJson('/api/im-connector/info')
+      const data = await fetchInfo(Boolean(fresh))
       setState({
         loading: false,
         error: '',
-        providers: Array.isArray(data.providers) ? data.providers : [],
+        providers: data.providers,
       })
     } catch (error) {
       setState(current => ({ ...current, loading: false, error: String((error && error.message) || error) }))
@@ -184,7 +201,7 @@ function SettingsPage() {
   }, [])
 
   React.useEffect(() => {
-    refresh()
+    refresh(false)
   }, [refresh])
 
   // 轮询进行中的登录：先看会话是否仍在运行，再看授权结果。
@@ -202,7 +219,7 @@ function SettingsPage() {
             // 仍在等待扫码 / 浏览器授权：保持二维码与提示
           } else if (data.authorized) {
             setSessions(current => ({ ...current, [provider]: { done: '登录成功' } }))
-            refresh()
+            refresh(true)
             setTimeout(() => {
               setSessions(current => (current[provider] && current[provider].done ? { ...current, [provider]: undefined } : current))
             }, 4000)
@@ -272,7 +289,7 @@ function SettingsPage() {
       info,
       session: sessions[info.id],
       onLogin: startLogin,
-      onRefresh: refresh,
+      onRefresh: () => { refresh(true) },
     }))
   }
   return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', paddingBottom: '24px' } }, children)
@@ -287,8 +304,8 @@ function StatusChip() {
 
   const load = React.useCallback(async () => {
     try {
-      const data = await getJson('/api/im-connector/info')
-      const providers = Array.isArray(data.providers) ? data.providers : []
+      const data = await fetchInfo(false)
+      const providers = data.providers
       const authorized = providers.filter(authorizedOf).length
       const detail = providers
         .map(info => `${info.displayName || info.id}: ${authorizedOf(info) ? '已登录' : '未登录'}`)

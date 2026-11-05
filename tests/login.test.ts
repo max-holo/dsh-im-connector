@@ -35,6 +35,8 @@ describe("login session", () => {
     expect(status.provider).toBe("dingtalk");
     expect(typeof status.authorized).toBe("boolean");
     expect(status.output).toBeTypeOf("string");
+    // 会话存在时不拉起 CLI 查询 auth（等待扫码期间的轮询必须零开销）
+    expect(status.auth).toBeUndefined();
   });
 
   it("requests a QR image path for wecom logins", async () => {

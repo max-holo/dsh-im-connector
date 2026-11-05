@@ -148,8 +148,9 @@ export function buildMcpServer(options: McpServerOptions = {}): McpServer {
     },
     async () => {
       try {
-        const providers: ProviderInfo[] = [];
-        for (const spec of listProviders()) providers.push(await collectProviderInfo(spec, binOf(spec.id)));
+        const providers = await Promise.all(
+          listProviders().map((spec) => collectProviderInfo(spec, binOf(spec.id))),
+        );
         return textResult([
           { type: "text", text: JSON.stringify({ providers }, null, 2) },
         ], { ok: true, providers });
