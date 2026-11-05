@@ -119,18 +119,21 @@ export class CliRunner {
         const parsed = parseStdoutJson(stdout);
         if (code !== 0) {
           const envelope = parseErrorEnvelope(stderr);
+          // wecom-cli 把结构化错误写在 stdout（errcode/errmsg），stderr 为空时也要取出可读原因。
+          const wecom = envelope === undefined ? parseWecomError(stdout) : undefined;
+          const message =
+            (envelope?.error?.message ?? wecom?.message ?? stderr.trim()) || `${this.spec.bin} exited with code ${code}`;
           reject(
             new CliError({
-              message:
-                envelope?.error?.message ?? stderr.trim() ?? `${this.spec.bin} exited with code ${code}`,
+              message,
               command,
               stderr,
               exitCode: code,
-              code: envelope?.error?.code,
+              code: envelope?.error?.code ?? wecom?.errcode,
               category: envelope?.error?.category,
               reason: envelope?.error?.reason,
               retryable: envelope?.error?.retryable,
-              hint: envelope?.error?.hint,
+              hint: envelope?.error?.hint ?? wecom?.hint,
               actions: envelope?.error?.actions,
             }),
           );
@@ -225,6 +228,23 @@ function parseStdoutJson(stdout: string): unknown {
     return JSON.parse(text);
   } catch {
     return text;
+  }
+}
+
+/** wecom-cli 的错误信封：结构化错误写在 stdout，形如 `{errcode, errmsg, help_message}`。 */
+function parseWecomError(stdout: string): { errcode: number; message: string; hint?: string } | undefined {
+  const text = stdout.trim();
+  if (!text.startsWith("{")) return undefined;
+  try {
+    const parsed = JSON.parse(text) as { errcode?: unknown; errmsg?: unknown; help_message?: unknown };
+    if (typeof parsed.errcode !== "number" || parsed.errcode === 0) return undefined;
+    const message = typeof parsed.errmsg === "string" && parsed.errmsg !== ""
+      ? parsed.errmsg
+      : `wecom-cli errcode ${parsed.errcode}`;
+    const hint = typeof parsed.help_message === "string" ? parsed.help_message : undefined;
+    return { errcode: parsed.errcode, message, ...(hint === undefined ? {} : { hint }) };
+  } catch {
+    return undefined;
   }
 }
 

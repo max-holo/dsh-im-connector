@@ -88,8 +88,13 @@ function countRestDays(fromStr, toStr) {
   return c;
 }
 
-// 轮换：第一个休息日 → firstPerson，之后每过一个休息日轮到下一个人
+// 轮换：第一个休息日 → firstPerson，之后每过一个休息日轮到下一个人；overrides 指定某天的值班人
 function dutyForRestDay(restDayStr) {
+  const override = cfg.overrides && cfg.overrides[restDayStr];
+  if (override) {
+    const p = cfg.rotation.find((r) => r.name === override);
+    if (p) return p;
+  }
   const idx = (countRestDays(cfg.anchor.firstRestDate, restDayStr) - 1) % cfg.rotation.length;
   return cfg.rotation[idx];
 }

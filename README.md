@@ -4,6 +4,15 @@
 
 > 本包只负责「Agent → 渠道」方向。在群里/私聊里与机器人对话（渠道 → Agent）请用 dsh-im 插件。
 
+## 能力一览
+
+- **工具**：`run`（透传 CLI）、`info`（环境自检）、`login` / `login_status`（扫码登录）
+- **MCP resources**（只读发现，按需读取，不消耗调用）
+- **Server instructions**：模型系统提示里带调用约定与常见错误说明
+- **结构化输出**：工具结果同时返回 `structuredContent`（可被程序化调用/PTC 消费）
+- **DSH Web UI**：登录工具的二维码在聊天里**内联渲染**（客户端 toolview）
+- **版本兼容声明**：`engines.dsh >= 0.2.2-0`；DSH 插件页支持「更新」到新版本
+
 ## 前置条件
 
 - Node.js >= 18
@@ -18,20 +27,18 @@ npx -y im-connector          # 直接用，无需安装
 npm i -g im-connector        # 或全局安装
 ```
 
-> 安装体积约 20MB（只含 Windows 版 dws 二进制 + 企业微信 CLI），不再是原来的 130MB；也不需要 pnpm 允许任何安装脚本。
+> 安装体积约 20MB（只含 Windows 版 dws 二进制 + 企业微信 CLI），不需要 pnpm 允许任何安装脚本。
 
 ## 登录（扫码即可，不用终端）
 
-配置好 MCP 客户端后，让 Agent 调用 `login` 工具：
-
 | 平台 | 调用 | 交互 |
 |---|---|---|
-| 企业微信 | `login {provider:"wecom"}` | 返回**二维码图片**，用企业微信扫码 |
+| 企业微信 | `login {provider:"wecom"}` | 返回**二维码图片**（DSH 中内联显示），用企业微信扫码 |
 | 钉钉 | `login {provider:"dingtalk"}` | 自动拉起**浏览器授权**（无头/远程环境用 `mode:"device"` 走设备码） |
 
 授权完成后调用 `login_status {provider}`，看到 `authorized: true` 即可开始使用。
 
-也可以在终端里手动登录：
+终端手动登录：
 
 ```bash
 dws auth login --recommend                    # 钉钉（浏览器授权）
@@ -50,13 +57,22 @@ wecom-cli auth init --noninteractive          # 企业微信（终端二维码�
 }
 ```
 
-**DSH 用户**一条命令即可（装包 + 注册 MCP 连接）：
+**DSH 用户**一条命令（装包 + 注册 MCP 连接 + 浏览器 toolview）：
 
 ```
 plugin_manager install_bundle  target: im-connector
 ```
 
-安装后工具名为 `mcp__im__run`。
+安装后工具名为 `mcp__im__run`（另有 `info` / `login` / `login_status`）。
+
+### 可选：用 DSH 凭据模板注入环境变量
+
+bundle patch 已开启 `expandTemplates`，需要给 CLI 传额外环境变量时可用 `${credential:REF}`，凭据不会出现在配置或对话里：
+
+```yaml
+env:
+  MY_BOT_TOKEN: '${credential:im-bot-token}'
+```
 
 ## 使用
 
@@ -71,7 +87,8 @@ Agent 调用 `mcp__im__run`，参数是 `{ provider, args }`，`args` 就是对�
 { "provider": "dingtalk", "args": ["todo", "+get-my-tasks"] }
 
 // 日志 / 日报周报
-{ "provider": "dingtalk", "args": ["report", "+create", "--template", "日报", "--content", "..."] }
+{ "provider": "dingtalk", "args": ["report", "template", "list"] }
+{ "provider": "dingtalk", "args": ["report", "entry", "submit", "--template-id", "<id>", "--contents-file", "./report.json"] }
 
 // 日程 / 审批 / 通讯录
 { "provider": "dingtalk", "args": ["calendar", "+today"] }
@@ -80,9 +97,22 @@ Agent 调用 `mcp__im__run`，参数是 `{ provider, args }`，`args` 就是对�
 
 // 企业微信
 { "provider": "wecom", "args": ["contact", "users", "search", "--keywords", "张三"] }
+{ "provider": "wecom", "args": ["message", "aibot", "sessions", "list"] }
 ```
 
 完整命令见各 CLI 的 `--help`（如 `dws chat --help`、`wecom-cli message --help`）。
+
+## 资源（MCP resources，只读发现）
+
+| 资源 | 内容 |
+|---|---|
+| `im://providers` | 平台目录、CLI、是否内置二进制、示例命令 |
+| `im://dingtalk/services` | dws 服务域清单（24 个，含 contact/chat/calendar/todo/oa/doc/wiki/mail/minutes/attendance/report/sheet/whiteboard/aitable/agoal/hrbrain 等） |
+| `im://wecom/sessions` | 机器人最近会话（按最后消息时间倒序） |
+| `im://dingtalk/templates` | 日志模板名称与模板 ID |
+| `im://dingtalk/group/{group}/messages?limit=N` | 读取指定群的最近消息（资源模板） |
+
+DSH 自带共享资源工具（`list_mcp_resources` / `list_mcp_resource_templates` / `read_mcp_resource`），模型可按需读取；读取失败会返回可读诊断而不是协议错误。
 
 ## 自检
 
@@ -95,7 +125,8 @@ Agent 调用 `mcp__im__run`，参数是 `{ provider, args }`，`args` 就是对�
       "id": "dingtalk",
       "displayName": "钉钉",
       "version": "dws version v1.0.65 (...)",
-      "resolved": "<npm>/dingtalk-workspace-cli/bin/dws.js",
+      "bundled": true,
+      "resolved": "<profile>/node_modules/im-connector/vendor/dws/win32-x64/dws.exe",
       "auth": { "authenticated": true, "corp_name": "...", ... }
     },
     { "id": "wecom", "version": "wecom-cli 1.3.4", "auth": "authorized" }
@@ -106,15 +137,19 @@ Agent 调用 `mcp__im__run`，参数是 `{ provider, args }`，`args` 就是对�
 ## 说明
 
 - **写操作**（发消息、提交审批等）请先让 Agent 确认意图；不确定时用 `--dry-run` 预览（两平台都支持）
-- 参数会原样透传给 CLI，返回其 JSON 输出
-- 支持的 provider：`dingtalk`（dws，24 个服务域 + `api`/`aicard`/`audit` 等）、`wecom`（wecom-cli，`--schema`/`--page-count`/`--dry-run`）
+- 参数会原样透传给 CLI，返回其 JSON 输出 + `structuredContent`
+- 支持的 provider：`dingtalk`（dws，24 个服务域）、`wecom`（wecom-cli，`--schema`/`--page-count`/`--dry-run`）
+- 企业微信 `errcode 853006` / `850003` 指企业未开通或授权过期，需要管理员授权/重新登录，不是本插件问题
 
 ## 开发
 
 ```bash
 pnpm install
-pnpm verify     # typecheck + 测试 + 构建 + MCP 冒烟
+pnpm verify     # typecheck + 测试 + 构建（含浏览器 toolview）+ MCP 冒烟
 ```
+
+- 内置 dws 二进制升级：`npm i -g dingtalk-workspace-cli@latest && node scripts/vendor-dws.mjs`
+- 浏览器 toolview 源码在 `client-src/index.js`，`scripts/build-client.mjs` 产出 `lib/client.js`
 
 发布（维护者）：
 

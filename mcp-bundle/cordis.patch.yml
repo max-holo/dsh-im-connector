@@ -1,3 +1,6 @@
+# im-connector 组合补丁：
+# 1) im-connector-mcp：插入 @deepseek-ai/dsh-mcp-client 连接（MCP 工具入口）
+# 2) im-connector-client：插入本包的 host 行，使 dsh.client 的浏览器 toolview 生效
 - insert:
     - id: im-connector-mcp
       name: '@deepseek-ai/dsh-mcp-client'
@@ -7,4 +10,9 @@
         command: !!js process.execPath
         args:
           - !!js '`${ctx.get("profileContext").dir}/node_modules/im-connector/dist/mcp/server.js`'
+        startupTimeoutMs: 30000
+        closeTimeoutMs: 5000
+        expandTemplates: true
         failOnStartupError: true
+    - id: im-connector-client
+      name: 'im-connector/host'

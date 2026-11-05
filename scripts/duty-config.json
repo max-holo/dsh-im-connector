@@ -13,6 +13,10 @@
     "firstRestDate": "2026-10-17",
     "firstPerson": "杨春艳"
   },
+  "overrides": {
+    "2026-11-07": "杨春艳",
+    "2026-11-14": "丁桐"
+  },
   "holidays": {
     "2026": {
       "restDays": [
