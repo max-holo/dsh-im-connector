@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -10,6 +9,7 @@ import { getProvider, listProviders } from "../providers/registry.js";
 import type { ImProviderSpec } from "../providers/types.js";
 import { CliRunner } from "../cli/runner.js";
 import { isCliError } from "../cli/errors.js";
+import { collectProviderInfo, type ProviderInfo } from "../control/providers.js";
 import { loginStatus, startLogin } from "../login/session.js";
 import { buildInstructions } from "./instructions.js";
 import { registerResources } from "./resources.js";
@@ -65,63 +65,6 @@ function failed(spec: ImProviderSpec, action: string, e: unknown): CallToolResul
 
 function textResult(content: CallToolResult["content"], structuredContent: Record<string, unknown>): CallToolResult {
   return { content, structuredContent };
-}
-
-interface ProviderInfo {
-  id: string;
-  displayName: string;
-  bin: string;
-  bundled: boolean;
-  resolved?: string;
-  version?: string;
-  auth?: unknown;
-  authError?: string;
-}
-
-async function collectProviderInfo(spec: ImProviderSpec, binOverride?: string): Promise<ProviderInfo> {
-  const runner = new CliRunner(spec);
-  const info: ProviderInfo = {
-    id: spec.id,
-    displayName: spec.displayName,
-    bin: spec.bin,
-    bundled: spec.bundledCliDir !== undefined,
-  };
-
-  try {
-    info.resolved = await runner.resolveScript(binOverride);
-  } catch {
-    /* 解析失败不影响其余字段 */
-  }
-
-  try {
-    const exec = await runner.runRaw(spec.versionArgs ?? ["--version"], { bin: binOverride });
-    const firstLine = exec.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line.length > 0);
-    if (firstLine !== undefined) info.version = firstLine;
-  } catch {
-    /* 版本查询失败时回退 package.json */
-  }
-  if (info.version === undefined) {
-    try {
-      const require = createRequire(import.meta.url);
-      const pkgJson = require.resolve(`${spec.npmPackage}/package.json`);
-      const manifest = JSON.parse(readFileSync(pkgJson, "utf8")) as { version?: string };
-      if (manifest.version !== undefined) info.version = manifest.version;
-    } catch {
-      /* 包不在本地时保持未知 */
-    }
-  }
-
-  if (spec.authArgs !== undefined) {
-    try {
-      info.auth = await runner.runJson([...spec.authArgs], { bin: binOverride });
-    } catch (e) {
-      info.authError = isCliError(e) ? e.message : e instanceof Error ? e.message : String(e);
-    }
-  }
-  return info;
 }
 
 /** 构建统一 IM 透传 MCP server（McpServer 高层 API）。 */
@@ -371,9 +314,26 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
 }
 
-const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (invokedDirectly) {
+/**
+ * 是否由 node 直接执行本文件。
+ * 链接安装（link:/符号链接）时 `import.meta.url` 是真实路径而 argv[1] 是链接路径，
+ * 直接字符串比较会误判并让服务器静默退出，因此比较 realpath。
+ */
+function isMainEntry(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    try {
+      return pathToFileURL(entry).href === import.meta.url;
+    } catch {
+      return false;
+    }
+  }
+}
+
+if (isMainEntry()) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);
