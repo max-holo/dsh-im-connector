@@ -1,6 +1,6 @@
 {
   "name": "im-connector",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "MCP server that lets agents drive DingTalk (dws) and WeCom (wecom-cli) CLIs: send messages, write reports, create todos, query calendars and approvals. Ships MCP resources, server instructions, structured tool output, and an inline QR login row for the DSH Web UI.",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,7 +42,7 @@
     "mcp": "node dist/mcp/server.js",
     "smoke:mcp": "node scripts/mcp-smoke.mjs",
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm smoke:mcp",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build && npm run smoke:mcp"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build && npm run smoke:mcp && node scripts/check-vendor.mjs"
   },
   "engines": {
     "node": ">=18",
