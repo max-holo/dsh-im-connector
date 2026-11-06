@@ -10,3 +10,5 @@ coverage/
 
 vendor/dws/win32-x64/
 
+
+lib/
