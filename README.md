@@ -16,8 +16,16 @@
 ## 前置条件
 
 - Node.js >= 18
-- **无需单独安装 CLI**：钉钉 `dws` 的 Windows x64 可执行文件**已内置在包内**（`vendor/dws/win32-x64/dws.exe`，v1.0.65，Apache-2.0）；企业微信 `wecom-cli` 通过可选依赖自动安装
-- 其它平台（Linux / macOS / Windows arm64）：`npm i -g dingtalk-workspace-cli` 后会被自动使用
+- **Windows 开箱即用**：包内已内置 dws v1.0.67 兜底二进制（Apache-2.0）与企业微信 `wecom-cli`（可选依赖），零安装可用
+- **推荐保持最新**：任选一种官方方式安装 dws，插件会**自动优先使用**你安装的版本：
+  ```powershell
+  # 独立安装（官方主推，dws upgrade 自升级）
+  irm https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-workspace-cli/main/scripts/install.ps1 | iex
+  # 或 npm 全局
+  npm i -g dingtalk-workspace-cli
+  ```
+- CLI 解析顺序：`DINGTALK_DWS_BIN`/`~/.im-connector/config.json` 覆盖 → 官方独立安装（`~/.local/bin`）→ npm 全局 → 本地依赖 → **内置兜底** → PATH
+- 其它平台（Linux / macOS / Windows arm64）无内置兜底，请按上面方式安装 dws
 - **登录一次即可**（凭据保存在 CLI 自己的本地登录态，本包不接触凭据）——见下方「登录」
 
 ## 安装
@@ -27,7 +35,7 @@ npx -y im-connector          # 直接用，无需安装
 npm i -g im-connector        # 或全局安装
 ```
 
-> 安装体积约 20MB（只含 Windows 版 dws 二进制 + 企业微信 CLI），不需要 pnpm 允许任何安装脚本。
+> 安装体积约 25MB（只含 Windows 版 dws 兜底二进制 + 企业微信 CLI），不需要 pnpm 允许任何安装脚本。
 
 ## 登录（扫码即可，不用终端）
 

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImProviderSpec } from "../providers/types.js";
@@ -155,13 +156,13 @@ export class CliRunner {
     if (bin !== this.spec.bin && existsSync(bin)) {
       return { command: bin, prefix: [], shell: false };
     }
-    // 3) 随包携带的 CLI 二进制（如 vendor/dws/win32-x64/dws.exe，开箱即用）
     if (bin === this.spec.bin) {
-      const bundled = bundledCliExecutable(this.spec);
-      if (bundled) {
-        return { command: bundled, prefix: [], shell: false };
+      // 3) 官方独立安装（~/.local/bin，dws upgrade 自升级保持最新）
+      const standalone = standaloneCliExecutable(this.spec);
+      if (standalone) {
+        return { command: standalone, prefix: [], shell: false };
       }
-      // 4) 回退：npm 全局安装的 CLI
+      // 4) npm 全局安装的 CLI（node wrapper，用户自维护）
       const globalRoot = await npmGlobalRoot();
       if (globalRoot) {
         const script = join(globalRoot, ...this.spec.binScript.split("/"));
@@ -169,13 +170,18 @@ export class CliRunner {
           return { command: process.execPath, prefix: [script], shell: false };
         }
       }
-      // 5) 通过 package.json 的 bin 字段再找一次（处理 binScript 与安装布局不一致）
+      // 5) 本地依赖（require.resolve 到包内 node_modules）
       const viaManifest = await cliScriptFromManifest(this.spec);
       if (viaManifest) {
         return { command: process.execPath, prefix: [viaManifest], shell: false };
       }
+      // 6) 随包携带的兜底二进制（仅部分平台；版本随包发布可能滞后于官方最新）
+      const bundled = bundledCliExecutable(this.spec);
+      if (bundled) {
+        return { command: bundled, prefix: [], shell: false };
+      }
     }
-    // 6) 回退：shell 执行（Windows shim）
+    // 7) 回退：shell 执行（Windows shim）
     return { command: bin, prefix: [], shell: process.platform === "win32" };
   }
 }
@@ -183,6 +189,16 @@ export class CliRunner {
 /** 包根目录（dist/cli → 包根；源码运行时为仓库根）。 */
 function packageRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
+
+/**
+ * 官方独立安装的 CLI 可执行文件（dws install.ps1/install.sh 的默认位置
+ * `~/.local/bin/<bin>[.exe]`；`<bin> upgrade` 在此自升级保持最新）。
+ */
+function standaloneCliExecutable(spec: ImProviderSpec): string | undefined {
+  const exe = process.platform === "win32" ? `${spec.bin}.exe` : spec.bin;
+  const candidate = join(homedir(), ".local", "bin", exe);
+  return existsSync(candidate) ? candidate : undefined;
 }
 
 /**
@@ -257,8 +273,17 @@ async function npmGlobalRoot(): Promise<string | null> {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const run = promisify(execFile);
-    const { stdout } = await run("npm", ["root", "-g"], { timeout: 10_000, windowsHide: true });
-    const root = String(stdout).trim();
+    // Windows 上 npm 是 .cmd shim：必须走 shell；整串命令传参避免 DEP0190（args+shell 不转义）
+    const { stdout } =
+      process.platform === "win32"
+        ? await run("npm root -g", { timeout: 10_000, windowsHide: true, shell: true })
+        : await run("npm", ["root", "-g"], { timeout: 10_000, windowsHide: true });
+    // cmd 输出可能带 CRLF 与多行；取最后一个非空行（即路径）
+    const root = String(stdout)
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .pop() ?? "";
     if (root !== "") npmGlobalRootMemo = root;
     return root || null;
   } catch {
