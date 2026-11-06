@@ -214,6 +214,12 @@ export function buildMcpServer(options: McpServerOptions = {}): McpServer {
           login.qrPath === undefined
             ? undefined
             : `![${login.displayName}登录二维码](${login.qrPath.replace(/\\/g, "/")})`;
+        const hint =
+          login.qrDataUrl !== undefined
+            ? "请用手机扫描二维码完成授权，然后调用 login_status 确认。"
+            : spec.qrOutputFlag !== undefined
+              ? "正在生成二维码，请稍候…"
+              : "请在浏览器完成授权（钉钉默认自动打开浏览器）；完成后调用 login_status 确认。";
         content.push({
           type: "text",
           text: JSON.stringify(
@@ -225,9 +231,7 @@ export function buildMcpServer(options: McpServerOptions = {}): McpServer {
               qrPath: login.qrPath,
               markdown,
               outputTail: login.output.slice(-800),
-              hint: login.qrDataUrl
-                ? "请用手机扫描二维码完成授权，然后调用 login_status 确认。"
-                : "请在浏览器完成授权（钉钉默认自动打开浏览器）；完成后调用 login_status 确认。",
+              hint,
             },
             null,
             2,
@@ -242,9 +246,7 @@ export function buildMcpServer(options: McpServerOptions = {}): McpServer {
           ...(login.qrPath === undefined ? {} : { qrPath: login.qrPath }),
           ...(markdown === undefined ? {} : { markdown }),
           outputTail: login.output.slice(-800),
-          hint: login.qrDataUrl
-            ? "请用手机扫描二维码完成授权，然后调用 login_status 确认。"
-            : "请在浏览器完成授权；完成后调用 login_status 确认。",
+          hint,
         });
       } catch (e) {
         return failed(spec, "login", e);

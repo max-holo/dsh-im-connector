@@ -129,7 +129,7 @@ function ProviderCard(props) {
     ),
   ]
 
-  // 登录中（钉钉等待浏览器、企微等待扫码）；二维码与提示不重复展示
+  // 登录中：企微显示二维码 + 扫码提示；等待期间显示按平台区分的提示
   if (running && !session.error) {
     if (session.qrDataUrl) {
       children.push(React.createElement('img', {
@@ -141,7 +141,7 @@ function ProviderCard(props) {
       children.push(React.createElement('div', { style: LABEL, key: 'qr-hint' }, '请用企业微信扫码'))
     } else {
       children.push(React.createElement('div', { style: MUTED, key: 'waiting' },
-        session.hint || '已打开浏览器，请在浏览器中完成授权'))
+        session.hint || '正在发起登录…'))
     }
   }
   // 失败 / 中断：保留原因，不静默消失

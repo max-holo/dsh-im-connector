@@ -88,8 +88,8 @@ function packageVersion(): string {
   }
 }
 
-/** 把登录快照压成设置页需要的形状（含二维码 data URL）。 */
-function loginPayload(snapshot: Awaited<ReturnType<typeof startLogin>>): Record<string, unknown> {
+/** 把登录快照压成设置页需要的形状（含二维码 data URL；提示按平台区分）。 */
+function loginPayload(spec: ImProviderSpec, snapshot: Awaited<ReturnType<typeof startLogin>>): Record<string, unknown> {
   return {
     provider: snapshot.provider,
     displayName: snapshot.displayName,
@@ -98,9 +98,12 @@ function loginPayload(snapshot: Awaited<ReturnType<typeof startLogin>>): Record<
     qrPath: snapshot.qrPath,
     qrDataUrl: snapshot.qrDataUrl,
     outputTail: snapshot.output.slice(-600),
-    hint: snapshot.qrDataUrl
-      ? "请用手机扫描二维码完成授权，然后点击「刷新状态」。"
-      : "请在浏览器完成授权（钉钉会自动打开浏览器），然后点击「刷新状态」。",
+    hint:
+      snapshot.qrDataUrl !== undefined
+        ? "请用手机扫描二维码完成授权，然后点击「刷新状态」。"
+        : spec.qrOutputFlag !== undefined
+          ? "正在生成二维码，请稍候…"
+          : "请在浏览器完成授权（钉钉会自动打开浏览器），然后点击「刷新状态」。",
   };
 }
 
@@ -158,7 +161,7 @@ async function handleLogin(req: HttpRequest, res: HttpResponse): Promise<void> {
       mode,
       bin: configBinOverrides()[spec.id],
     });
-    sendJson(res, 200, { ok: true, ...loginPayload(snapshot) });
+    sendJson(res, 200, { ok: true, ...loginPayload(spec, snapshot) });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: errorMessage(error) });
   }
