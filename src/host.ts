@@ -97,6 +97,7 @@ function loginPayload(spec: ImProviderSpec, snapshot: Awaited<ReturnType<typeof 
     exitCode: snapshot.exitCode,
     qrPath: snapshot.qrPath,
     qrDataUrl: snapshot.qrDataUrl,
+    userCode: snapshot.userCode,
     outputTail: snapshot.output.slice(-600),
     hint:
       snapshot.qrDataUrl !== undefined
@@ -190,6 +191,7 @@ async function handleLoginStatus(req: HttpRequest, res: HttpResponse): Promise<v
       running: status.running,
       exitCode: status.exitCode,
       qrDataUrl: status.qrDataUrl,
+      userCode: status.userCode,
       authError: status.authError,
       outputTail: status.output.slice(-400),
     });

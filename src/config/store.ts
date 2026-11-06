@@ -43,7 +43,8 @@ export function normalizeConfig(value: unknown): ImConnectorConfig {
 
 export function loadConfig(): ImConnectorConfig {
   try {
-    const raw = readFileSync(configPath(), "utf8");
+    // 容错 BOM：Windows 记事本等编辑器保存的 JSON 常带 BOM，会让 JSON.parse 失败
+    const raw = readFileSync(configPath(), "utf8").replace(/^\uFEFF/u, "");
     return normalizeConfig(JSON.parse(raw));
   } catch {
     return {};
@@ -54,7 +55,8 @@ export function saveConfig(value: unknown): ImConnectorConfig {
   const config = normalizeConfig(value);
   const file = configPath();
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(config, null, 2), "utf8");
+  // 无 BOM 写入，保证 JSON.parse 可直接读取
+  writeFileSync(file, JSON.stringify(config, null, 2), { encoding: "utf8" });
   return config;
 }
 

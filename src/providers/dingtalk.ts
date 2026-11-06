@@ -13,6 +13,7 @@ export const dingtalk: ImProviderSpec = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   loginArgs: ["auth", "login", "--recommend"],
+  deviceLoginArgs: ["auth", "login", "--device"],
   examples: [
     '["contact","+me"] / ["contact","+search-user","--query","张三"]',
     '["calendar","+today"] / ["calendar","+create","--title","评审会","--start","2026-11-06 10:00"]',

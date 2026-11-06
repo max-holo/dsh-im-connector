@@ -1,6 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { authorizedOf, loginStatus, startLogin, stopLogin } from "../src/login/session.js";
+import {
+  authorizedOf,
+  extractDeviceGrant,
+  loginStatus,
+  qrDataUrlFor,
+  startLogin,
+  stopLogin,
+} from "../src/login/session.js";
 import { CliRunner } from "../src/cli/runner.js";
 import { dingtalk } from "../src/providers/dingtalk.js";
 import { wecom } from "../src/providers/wecom.js";
@@ -21,6 +28,39 @@ describe("authorizedOf", () => {
     expect(authorizedOf({ results: { authorized: "authorized" } })).toBe(true);
     expect(authorizedOf(null)).toBe(false);
     expect(authorizedOf(undefined)).toBe(false);
+  });
+});
+
+describe("device grant", () => {
+  it("extracts the prefilled URL and user code from device-flow output", () => {
+    const text = [
+      "● Step 1: 请求设备授权码...",
+      "",
+      "  授权码: FGTH-RFCT",
+      "  授权码将在 900 秒后过期。",
+      "",
+      "  授权链接（已填入授权码）：",
+      "https://login.dingtalk.com/oauth2/device/verify.htm?caller=dws&callerUmt=P1gAsgnlCvv0dHOcriLDtugEZO2fU7c&user_code=FGTH-RFCT",
+      "",
+      "  手动输入授权码的链接：",
+      "https://login.dingtalk.com/oauth2/device/verify.htm?caller=dws&callerUmt=P1gAsgnlCvv0dHOcriLDtugEZO2fU7c",
+    ].join("\n");
+    const grant = extractDeviceGrant(text);
+    expect(grant?.url).toBe(
+      "https://login.dingtalk.com/oauth2/device/verify.htm?caller=dws&callerUmt=P1gAsgnlCvv0dHOcriLDtugEZO2fU7c&user_code=FGTH-RFCT",
+    );
+    expect(grant?.userCode).toBe("FGTH-RFCT");
+  });
+
+  it("returns undefined when no prefilled device URL is present", () => {
+    expect(
+      extractDeviceGrant("授权码: ABCD-EFGH\nhttps://login.dingtalk.com/oauth2/device/verify.htm?caller=dws"),
+    ).toBeUndefined();
+  });
+
+  it("generates a QR data URL for a device link", async () => {
+    const url = await qrDataUrlFor("https://login.dingtalk.com/oauth2/device/verify.htm?user_code=ABCD-EFGH");
+    expect(url).toMatch(/^data:image\/png;base64,/);
   });
 });
 

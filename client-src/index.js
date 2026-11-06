@@ -129,7 +129,7 @@ function ProviderCard(props) {
     ),
   ]
 
-  // 登录中：企微显示二维码 + 扫码提示；等待期间显示按平台区分的提示
+  // 登录中：显示二维码 + 扫码提示（企微为 CLI 生成的二维码，钉钉为设备码短链生成的二维码）
   if (running && !session.error) {
     if (session.qrDataUrl) {
       children.push(React.createElement('img', {
@@ -138,7 +138,12 @@ function ProviderCard(props) {
         alt: '登录二维码',
         style: { width: '190px', height: '190px', borderRadius: '10px', background: '#fff', padding: '8px', alignSelf: 'flex-start' },
       }))
-      children.push(React.createElement('div', { style: LABEL, key: 'qr-hint' }, '请用企业微信扫码'))
+      children.push(React.createElement('div', { style: LABEL, key: 'qr-hint' },
+        `请用${info.displayName}扫码，在手机上确认授权`))
+      if (session.userCode) {
+        children.push(React.createElement('div', { style: LABEL, key: 'user-code' },
+          `验证码：${session.userCode}`))
+      }
     } else {
       children.push(React.createElement('div', { style: MUTED, key: 'waiting' },
         session.hint || '正在发起登录…'))
@@ -250,13 +255,15 @@ function SettingsPage() {
   const startLogin = React.useCallback(async provider => {
     setSessions(current => ({ ...current, [provider]: { busy: true, running: true } }))
     try {
-      const data = await postJson('/api/im-connector/login', { provider })
+      // 设备码模式：钉钉在页面内出二维码（手机扫码确认），企微不受影响
+      const data = await postJson('/api/im-connector/login', { provider, mode: 'device' })
       setSessions(current => ({
         ...current,
         [provider]: {
           busy: false,
           running: Boolean(data.running),
           qrDataUrl: data.qrDataUrl,
+          userCode: data.userCode,
           hint: data.hint,
           outputTail: data.outputTail,
         },

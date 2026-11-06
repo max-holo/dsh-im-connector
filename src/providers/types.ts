@@ -25,6 +25,8 @@ export interface ImProviderSpec {
   authArgs?: string[];
   /** 登录/授权命令（在 MCP 工具里后台执行），如 ["auth","login","--recommend"]。 */
   loginArgs?: string[];
+  /** 设备码登录命令（无头/扫码场景），如 ["auth","login","--device"]；缺省回落 loginArgs。 */
+  deviceLoginArgs?: string[];
   /** 扫码输出图片的参数名（值为 PNG 路径），如 wecom-cli 的 "--output-qrcode"。 */
   qrOutputFlag?: string;
   /** 展示在 MCP 工具描述里的示例命令（数组形式，便于模型理解）。 */
