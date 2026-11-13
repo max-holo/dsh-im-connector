@@ -1,4 +1,21 @@
 /**
+ * 官方 release 的按需下载规格：包里没有携带该平台的二进制时，
+ * 首次使用从官方 GitHub Releases 取对应资产并校验 checksums.txt。
+ */
+export interface CliReleaseSpec {
+  /** GitHub 仓库 owner/name，如 "DingTalk-Real-AI/dingtalk-workspace-cli"。 */
+  repo: string;
+  /** `<platform>-<arch>` → release 资产文件名，如 "darwin-arm64": "dws-darwin-arm64.tar.gz"。 */
+  assets: Record<string, string>;
+  /** 校验和资产名，默认 "checksums.txt"。 */
+  checksumsAsset?: string;
+  /** 指定版本的环变量，默认 "DINGTALK_DWS_VERSION"（值为 latest 或 vX.Y.Z）。 */
+  versionEnv?: string;
+  /** 设为 1 关闭自动下载（离线/内网），默认 "DINGTALK_DWS_NO_DOWNLOAD"。 */
+  disableEnv?: string;
+}
+
+/**
  * 一个 IM 平台（provider）接入规格：如何找到它的 CLI、如何请求 JSON 输出。
  * 未来接入飞书 / Discord 等，只需新增一个 spec 并注册进 registry。
  */
@@ -19,6 +36,8 @@ export interface ImProviderSpec {
   envBin?: string;
   /** 随包携带的 CLI 二进制目录（相对包根），按 `<platform>-<arch>/` 子目录查找，如 "vendor/dws"。 */
   bundledCliDir?: string;
+  /** 包内没有该平台二进制时，从官方 release 按需下载。 */
+  release?: CliReleaseSpec;
   /** 查询 CLI 版本的原始参数（不追加 formatArgs），如 ["--version"]。 */
   versionArgs?: string[];
   /** 查询登录状态的命令（走 JSON 输出），如 ["auth","status"]。 */

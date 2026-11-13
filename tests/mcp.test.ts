@@ -151,6 +151,37 @@ describe("unified IM MCP server", () => {
     });
     expect(bad.isError).toBe(true);
   });
+
+  it("explains how to fix a missing CLI instead of a bare spawn error", async () => {
+    const broken = buildMcpServer({ binOverrides: { dingtalk: "/nonexistent/dws-binary", wecom: FAKE } });
+    const [brokenClientTransport, brokenServerTransport] = InMemoryTransport.createLinkedPair();
+    await broken.connect(brokenServerTransport);
+    const brokenClient = new Client({ name: "broken-client", version: "0.0.0" }, { capabilities: {} });
+    await brokenClient.connect(brokenClientTransport);
+    try {
+      const run = await brokenClient.callTool({
+        name: "run",
+        arguments: { provider: "dingtalk", args: ["contact", "+me"] },
+      });
+      expect(run.isError).toBe(true);
+      const text = parseText(run as { content?: Array<{ type: string; text?: string }> });
+      expect(text).toContain("dws 不可用");
+      expect(text).toContain("DINGTALK_DWS_DOWNLOAD_BASE");
+      const error = (run.structuredContent as { error?: { hint?: string } } | undefined)?.error;
+      expect(error?.hint).toContain("DINGTALK_DWS_BIN");
+
+      const info = await brokenClient.callTool({ name: "info", arguments: {} });
+      const parsed = JSON.parse(parseText(info as { content?: Array<{ type: string; text?: string }> })) as {
+        providers: Array<{ id: string; available: boolean; hint?: string }>;
+      };
+      const dingtalkInfo = parsed.providers.find((p) => p.id === "dingtalk");
+      expect(dingtalkInfo?.available).toBe(false);
+      expect(dingtalkInfo?.hint).toContain("DINGTALK_DWS_NO_DOWNLOAD");
+    } finally {
+      await brokenClient.close();
+      await broken.close();
+    }
+  });
 });
 
 describe("instructions and resource parsing", () => {

@@ -10,6 +10,19 @@ export const dingtalk: ImProviderSpec = {
   formatArgs: ["--format", "json"],
   envBin: "DINGTALK_DWS_BIN",
   bundledCliDir: "vendor/dws",
+  // 包里只带 win32-x64 兜底（离线 Windows 可用）；macOS / Linux / arm 架构
+  // 首次使用时按需从官方 release 下载并校验。
+  release: {
+    repo: "DingTalk-Real-AI/dingtalk-workspace-cli",
+    assets: {
+      "win32-x64": "dws-windows-amd64.zip",
+      "win32-arm64": "dws-windows-arm64.zip",
+      "darwin-x64": "dws-darwin-amd64.tar.gz",
+      "darwin-arm64": "dws-darwin-arm64.tar.gz",
+      "linux-x64": "dws-linux-amd64.tar.gz",
+      "linux-arm64": "dws-linux-arm64.tar.gz",
+    },
+  },
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   loginArgs: ["auth", "login", "--recommend"],

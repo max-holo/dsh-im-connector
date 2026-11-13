@@ -16,7 +16,8 @@
 ## 前置条件
 
 - Node.js >= 18
-- **Windows 开箱即用**：包内已内置 dws v1.0.67 兜底二进制（Apache-2.0）与企业微信 `wecom-cli`（可选依赖），零安装可用
+- **Windows 开箱即用**：包内已内置 dws 兜底二进制（Apache-2.0）与企业微信 `wecom-cli`（可选依赖），零安装可用
+- **macOS / Linux 同样开箱即用**：包内没有对应平台二进制时，首次调用会自动从官方 GitHub Release 下载该平台的 dws（17–24MB，仅一次），用同一 release 的 `checksums.txt` 校验 sha256 后解压到用户缓存目录；之后直接复用缓存
 - **推荐保持最新**：任选一种官方方式安装 dws，插件会**自动优先使用**你安装的版本：
   ```powershell
   # 独立安装（官方主推，dws upgrade 自升级）
@@ -24,8 +25,9 @@
   # 或 npm 全局
   npm i -g dingtalk-workspace-cli
   ```
-- CLI 解析顺序：`DINGTALK_DWS_BIN`/`~/.im-connector/config.json` 覆盖 → 官方独立安装（`~/.local/bin`）→ npm 全局 → 本地依赖 → **内置兜底** → PATH
-- 其它平台（Linux / macOS / Windows arm64）无内置兜底，请按上面方式安装 dws
+- CLI 解析顺序：`DINGTALK_DWS_BIN`/`~/.im-connector/config.json` 覆盖 → 官方独立安装（`~/.local/bin`）→ npm 全局 → 本地依赖 → **内置兜底** → **按需下载官方 release** → PATH
+- 离线 / 内网：`DINGTALK_DWS_NO_DOWNLOAD=1` 关闭自动下载；`DINGTALK_DWS_DOWNLOAD_BASE=<镜像前缀>` 改用镜像（支持 http）；`DINGTALK_DWS_VERSION=v1.0.68` 固定版本；`IM_CONNECTOR_CACHE_DIR` 指定缓存目录
+- **下载失败时的提示**：`info` 返回 `available: false` + `download.error`（真实原因，如超时/连接拒绝/校验不符）+ `hint`（四条可照做的修复方式）；`run`/`login` 的失败结果也带同一份 `hint`，不会只丢一句 `spawn ENOENT`
 - **登录一次即可**（凭据保存在 CLI 自己的本地登录态，本包不接触凭据）——见下方「登录」
 
 ## 安装

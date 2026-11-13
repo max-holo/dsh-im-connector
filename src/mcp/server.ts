@@ -9,6 +9,7 @@ import { getProvider, listProviders } from "../providers/registry.js";
 import type { ImProviderSpec } from "../providers/types.js";
 import { CliRunner } from "../cli/runner.js";
 import { isCliError } from "../cli/errors.js";
+import { cliMissingHint } from "../cli/release.js";
 import { collectProviderInfo, type ProviderInfo } from "../control/providers.js";
 import { configBinOverrides } from "../config/store.js";
 import { loginStatus, startLogin } from "../login/session.js";
@@ -44,12 +45,19 @@ function unknownPlatform(provider: string | undefined): CallToolResult {
   };
 }
 
+/** 启动失败（没找到 CLI / 自动下载失败）时的可读提示，其它 CLI 错误保留原 hint。 */
+function launchHint(spec: ImProviderSpec, message: string): string | undefined {
+  if (spec.release === undefined) return undefined;
+  return /Failed to launch|ENOENT|not found|not recognized/i.test(message) ? cliMissingHint(spec) : undefined;
+}
+
 /** 工具失败统一转换：保留 CLI 错误信封的 code/hint。 */
 function failed(spec: ImProviderSpec, action: string, e: unknown): CallToolResult {
   if (isCliError(e)) {
-    const hint = e.hint;
+    const hint = e.hint ?? launchHint(spec, e.message);
     const code = e.code === undefined ? undefined : String(e.code);
-    const text = `${spec.displayName} ${action} failed: ${JSON.stringify(e.toJSON())}`;
+    const text = `${spec.displayName} ${action} failed: ${JSON.stringify(e.toJSON())}`
+      + (hint === undefined ? "" : `\n\n${hint}`);
     return {
       content: [{ type: "text", text }],
       isError: true,
@@ -57,10 +65,11 @@ function failed(spec: ImProviderSpec, action: string, e: unknown): CallToolResul
     };
   }
   const message = e instanceof Error ? e.message : String(e);
+  const hint = launchHint(spec, message);
   return {
-    content: [{ type: "text", text: `${spec.displayName} ${action} failed: ${message}` }],
+    content: [{ type: "text", text: `${spec.displayName} ${action} failed: ${message}` + (hint === undefined ? "" : `\n\n${hint}`) }],
     isError: true,
-    structuredContent: { ok: false, provider: spec.id, error: { message } },
+    structuredContent: { ok: false, provider: spec.id, error: { message, hint } },
   };
 }
 
@@ -136,10 +145,16 @@ export function buildMcpServer(options: McpServerOptions = {}): McpServer {
             displayName: z.string(),
             bin: z.string(),
             bundled: z.boolean(),
+            available: z.boolean().describe("是否找到真实可执行入口"),
             resolved: z.string().optional(),
             version: z.string().optional(),
             auth: z.unknown().optional(),
             authError: z.string().optional(),
+            download: z
+              .object({ attempted: z.boolean(), ok: z.boolean(), error: z.string().optional() })
+              .optional()
+              .describe("首次运行自动下载官方二进制的结果"),
+            hint: z.string().optional().describe("不可用时的修复清单"),
           }),
         ),
         error: errorOutput,

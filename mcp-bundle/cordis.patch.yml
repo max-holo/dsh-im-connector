@@ -13,6 +13,7 @@
         args:
           - !!js '`${ctx.get("profileContext").dir}/node_modules/im-connector/dist/mcp/server.js`'
         startupTimeoutMs: 30000
+        toolCallTimeoutMs: 180000
         closeTimeoutMs: 5000
         expandTemplates: true
         failOnStartupError: true

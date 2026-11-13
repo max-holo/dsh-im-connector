@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImProviderSpec } from "../providers/types.js";
 import { CliError, parseErrorEnvelope } from "./errors.js";
+import { cliMissingHint, ensureReleaseCli } from "./release.js";
 
 export interface CliRunOptions {
   env?: NodeJS.ProcessEnv;
@@ -30,6 +31,8 @@ export interface LaunchSpec {
   command: string;
   prefix: string[];
   shell: boolean;
+  /** 没有找到任何真实 CLI，只能把裸命令交给 shell/PATH 解析（通常意味着不可用）。 */
+  fallback?: boolean;
 }
 
 /**
@@ -71,6 +74,17 @@ export class CliRunner {
     return this.launch(binOverride);
   }
 
+  /**
+   * 探测是否找到了真实的 CLI 入口（区别于「交给 PATH 兜底」）。
+   * @returns 找到时为脚本/可执行路径；只有 PATH 兜底时 `fallback: true`。
+   */
+  async probe(binOverride?: string): Promise<{ resolved?: string; fallback: boolean }> {
+    const launch = await this.launch(binOverride);
+    if (launch.fallback === true) return { fallback: true };
+    const resolved = launch.shell ? launch.command : (launch.prefix[0] ?? launch.command);
+    return { resolved, fallback: false };
+  }
+
   private async execute(
     displayArgs: string[],
     cliArgs: string[],
@@ -79,6 +93,8 @@ export class CliRunner {
     const launch = await this.launch(opts?.bin);
     const finalArgs = [...launch.prefix, ...cliArgs];
     const command = `${this.spec.bin} ${displayArgs.join(" ")}`;
+    // 没有任何真实 CLI 时（PATH 兜底），失败原因对用户没意义；把修复清单带上。
+    const missingHint = launch.fallback === true && this.spec.release !== undefined ? cliMissingHint(this.spec) : undefined;
     return new Promise<CliExecution>((resolve, reject) => {
       const child = spawn(launch.command, finalArgs, {
         shell: launch.shell,
@@ -112,6 +128,7 @@ export class CliRunner {
             message: `Failed to launch ${this.spec.bin} (${launch.command}): ${e.message}`,
             command,
             retryable: true,
+            hint: missingHint,
           }),
         );
       });
@@ -134,7 +151,7 @@ export class CliRunner {
               category: envelope?.error?.category,
               reason: envelope?.error?.reason,
               retryable: envelope?.error?.retryable,
-              hint: envelope?.error?.hint ?? wecom?.hint,
+              hint: envelope?.error?.hint ?? wecom?.hint ?? missingHint,
               actions: envelope?.error?.actions,
             }),
           );
@@ -180,9 +197,20 @@ export class CliRunner {
       if (bundled) {
         return { command: bundled, prefix: [], shell: false };
       }
+      // 7) PATH 上已有的 CLI（brew / scoop / 手工安装的 shim）
+      const onPath = pathCliExecutable(this.spec.bin);
+      if (onPath !== undefined) {
+        const viaShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(onPath);
+        return { command: onPath, prefix: [], shell: viaShell };
+      }
+      // 8) 官方 release 按需下载（macOS / Linux / arm 等包里未携带的平台）
+      const released = await ensureReleaseCli(this.spec);
+      if (released) {
+        return { command: released, prefix: [], shell: false };
+      }
     }
-    // 7) 回退：shell 执行（Windows shim）
-    return { command: bin, prefix: [], shell: process.platform === "win32" };
+    // 9) 回退：shell 执行（Windows shim）
+    return { command: bin, prefix: [], shell: process.platform === "win32", fallback: true };
   }
 }
 
@@ -210,6 +238,26 @@ function bundledCliExecutable(spec: ImProviderSpec): string | undefined {
   const exe = process.platform === "win32" ? `${spec.bin}.exe` : spec.bin;
   const candidate = join(packageRoot(), spec.bundledCliDir, `${process.platform}-${process.arch}`, exe);
   return existsSync(candidate) ? candidate : undefined;
+}
+
+/**
+ * 在 PATH 上查找同名的 CLI 可执行文件（Windows 依次尝试 .exe/.cmd/.bat）。
+ * @param bin - 命令名。
+ * @param env - 环境变量，默认 process.env（测试注入用）。
+ * @returns 绝对路径，找不到时 undefined。
+ */
+export function pathCliExecutable(bin: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const dirs = (env.PATH ?? env.Path ?? "").split(process.platform === "win32" ? ";" : ":");
+  const suffixes = process.platform === "win32" ? [".exe", ".cmd", ".bat"] : [""];
+  for (const dir of dirs) {
+    const trimmed = dir.trim().replace(/^"|"$/g, "");
+    if (trimmed === "") continue;
+    for (const suffix of suffixes) {
+      const candidate = join(trimmed, bin + suffix);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return undefined;
 }
 
 /**

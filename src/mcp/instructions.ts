@@ -32,6 +32,12 @@ ${providers}
 - \`im://dingtalk/templates\` — 日志模板与字段
 - \`im://dingtalk/group/{group}/messages?limit=N\` — 读取群消息（模板资源）
 
+## 首次运行与 CLI 不可用
+
+- 包装好后不需要手工安装 CLI：macOS / Linux 首次调用会自动从官方 GitHub Release 下载对应平台的 \`dws\`（约 17–24MB，仅一次），校验 sha256 后缓存；Windows 包内有兜底二进制。
+- 下载失败（网络不通、超时、校验不符）时，\`info\` 的 \`providers[].available\` 为 false，并带 \`download.error\` 与 \`hint\`；\`run\`/\`login\` 的失败结果也会附同一份 \`hint\`。
+- 遇到这种情况，**把 hint 里的修复方式转述给用户**，不要自行反复重试或改用其它平台；常见修复：装官方 CLI、设置 \`DINGTALK_DWS_DOWNLOAD_BASE\` 镜像、\`DINGTALK_DWS_BIN\` 指定路径、或 \`DINGTALK_DWS_NO_DOWNLOAD=1\` 离线模式。
+
 ## 常见错误
 
 - 企业微信 \`errcode 853006\`（this tool is not available for your corporation）：该企业未开通对应工具权限，如实告知用户，不要反复重试。
