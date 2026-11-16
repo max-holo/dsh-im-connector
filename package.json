@@ -1,6 +1,6 @@
 {
   "name": "im-connector",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "MCP connector that lets AI agents drive DingTalk (dws) and WeCom (wecom-cli): messages, calendar, todos, approvals and docs. Zero setup — the CLI downloads itself and login is a QR scan.",
   "repository": {
     "type": "git",
