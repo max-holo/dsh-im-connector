@@ -1,7 +1,11 @@
 {
   "name": "im-connector",
-  "version": "1.6.1",
-  "description": "MCP server that lets agents drive DingTalk (dws) and WeCom (wecom-cli) CLIs: send messages, write reports, create todos, query calendars and approvals. Ships MCP resources, server instructions, structured tool output, and an inline QR login row for the DSH Web UI.",
+  "version": "1.6.2",
+  "description": "MCP connector that lets AI agents drive DingTalk (dws) and WeCom (wecom-cli): messages, calendar, todos, approvals and docs. Zero setup — the CLI downloads itself and login is a QR scan.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/max-holo/dsh-im-connector.git"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
