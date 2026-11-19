@@ -215,6 +215,29 @@ function ProviderCard(props) {
   return React.createElement('div', { style: CARD }, children)
 }
 
+/** npm 下载统计：打开设置页时自动拉取（服务端缓存 30 分钟）。 */
+function DownloadsLine() {
+  const [d, setD] = React.useState(null)
+  React.useEffect(() => {
+    let stopped = false
+    fetch('/api/im-connector/downloads')
+      .then((r) => r.json())
+      .then((j) => { if (!stopped) setD(j) })
+      .catch(() => { if (!stopped) setD({ ok: false }) })
+    return () => { stopped = true }
+  }, [])
+  const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '—')
+  const text = d === null
+    ? '⬇ npm 下载统计获取中…'
+    : d.ok
+      ? '⬇ npm 累计下载 ' + fmt(d.total) + ' · 最近一周 ' + fmt(d.lastWeek)
+      : '⬇ npm 下载统计暂不可用（网络原因，稍后再试）'
+  return React.createElement('div', {
+    style: { ...MUTED, textAlign: 'center', paddingTop: '6px' },
+    title: d && d.ok ? '统计区间 ' + (d.weekStart || '?') + ' ~ ' + (d.weekEnd || '?') + '，数据来自 api.npmjs.org，服务端缓存 30 分钟' : '数据来自 api.npmjs.org',
+  }, text)
+}
+
 function SettingsPage() {
   const [state, setState] = React.useState({ loading: true, error: '', providers: [] })
   const [sessions, setSessions] = React.useState({})
@@ -329,6 +352,7 @@ function SettingsPage() {
       onRefresh: () => { refresh(true) },
     }))
   }
+  children.push(React.createElement(DownloadsLine, { key: 'downloads' }))
   return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', paddingBottom: '24px' } }, children)
 }
 

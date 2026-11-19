@@ -233,6 +233,60 @@ function handleResources(req: HttpRequest, res: HttpResponse): void {
   })();
 }
 
+// ---- npm download stats ------------------------------------------------------
+// /api/im-connector/downloads: last-week point + the summed range since the
+// package's first publish. Success caches 30 min on the host, failure 5 min.
+const NPM_PACKAGE = "im-connector";
+const NPM_SINCE = "2026-10-22"; // time.created of the npm package
+let downloadsCache: { at: number; ok: boolean; data: Record<string, unknown> } | null = null;
+
+async function fetchJsonFrom(url: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
+  return (await response.json()) as Record<string, unknown>;
+}
+
+async function fetchDownloads(): Promise<Record<string, unknown>> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [week, range] = await Promise.all([
+    fetchJsonFrom(`https://api.npmjs.org/downloads/point/last-week/${NPM_PACKAGE}`, 8000),
+    fetchJsonFrom(`https://api.npmjs.org/downloads/range/${NPM_SINCE}:${today}/${NPM_PACKAGE}`, 8000),
+  ]);
+  let total = 0;
+  const days = range.downloads;
+  if (Array.isArray(days)) {
+    for (const day of days as Array<{ downloads?: unknown }>) {
+      total += Number(day?.downloads) || 0;
+    }
+  }
+  return {
+    lastWeek: Number(week.downloads) || 0,
+    total,
+    since: NPM_SINCE,
+    weekStart: typeof week.start === "string" ? week.start : null,
+    weekEnd: typeof week.end === "string" ? week.end : null,
+  };
+}
+
+function handleDownloads(_req: HttpRequest, res: HttpResponse): void {
+  const serve = (payload: Record<string, unknown>): void => sendJson(res, 200, payload);
+  if (downloadsCache !== null && Date.now() - downloadsCache.at < (downloadsCache.ok ? 1800000 : 300000)) {
+    serve({ ok: downloadsCache.ok, ...downloadsCache.data, cachedAt: downloadsCache.at });
+    return;
+  }
+  void (async () => {
+    try {
+      const data = await fetchDownloads();
+      downloadsCache = { at: Date.now(), ok: true, data };
+      serve({ ok: true, ...data, cachedAt: downloadsCache.at });
+    } catch (error) {
+      const message = errorMessage(error);
+      downloadsCache = { at: Date.now(), ok: false, data: { error: message } };
+      serve({ ok: false, error: message, cachedAt: downloadsCache.at });
+    }
+  })();
+}
+
 export function apply(ctx: { get(name: string): unknown; effect(callback: () => void | (() => void)): unknown }): void {
   const server = ctx.get("webServer") as WebServer | undefined;
   if (server === undefined) return;
@@ -243,6 +297,7 @@ export function apply(ctx: { get(name: string): unknown; effect(callback: () => 
     { path: "/api/im-connector/login-status", handler: (req, res) => { void handleLoginStatus(req, res); } },
     { path: "/api/im-connector/config", handler: handleConfig },
     { path: "/api/im-connector/resources", handler: handleResources },
+    { path: "/api/im-connector/downloads", handler: handleDownloads },
   ];
   for (const route of routes) {
     ctx.effect(() => server.register({ kind: "exact", path: route.path, handler: route.handler }));
