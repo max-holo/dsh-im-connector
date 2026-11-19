@@ -19,7 +19,50 @@ const GITHUB_REPO = 'https://github.com/max-holo/dsh-im-connector'
 /** GitHub mark（官方 octocat 轮廓，currentColor 跟随主题文字色）。 */
 const GITHUB_MARK_PATH = 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z'
 
-/** 设置页头部右侧的 GitHub 图标链接。 */
+/** npm mark（simple-icons，currentColor 跟随主题文字色）。 */
+const NPM_MARK_PATH = 'M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z'
+
+// npm 累计下载量：模块级缓存 10 分钟（服务端另有 30 分钟缓存）。
+let dlMemo = { at: 0, promise: null }
+function fetchTotal() {
+  if (dlMemo.promise !== null && Date.now() - dlMemo.at < 600000) return dlMemo.promise
+  dlMemo = {
+    at: Date.now(),
+    promise: fetch('/api/im-connector/downloads')
+      .then((r) => r.json())
+      .then((j) => (j && j.ok && typeof j.total === 'number' ? j.total : null))
+      .catch(() => null),
+  }
+  return dlMemo.promise
+}
+
+/** 设置页头部右侧：npm 图标 + 累计下载（取不到就不显示）+ GitHub 图标。 */
+function HeaderLinks() {
+  const [total, setTotal] = React.useState(null)
+  const [ready, setReady] = React.useState(false)
+  React.useEffect(() => {
+    let stopped = false
+    fetchTotal().then((n) => { if (!stopped) { setTotal(n); setReady(true) } })
+    return () => { stopped = true }
+  }, [])
+  return React.createElement('div', { style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px', marginLeft: 'auto' } },
+    ready && total !== null
+      ? React.createElement('a', {
+          href: 'https://www.npmjs.com/package/im-connector',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          title: 'npm：im-connector · 累计下载 ' + total.toLocaleString('en-US'),
+          'aria-label': '在 npm 上查看本包',
+          style: { display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--dsw-alias-label-secondary, #8a8a92)', textDecoration: 'none' },
+        },
+        React.createElement('svg', { viewBox: '0 0 24 24', width: '13', height: '13', fill: 'currentColor', 'aria-hidden': 'true' }, React.createElement('path', { d: NPM_MARK_PATH })),
+        React.createElement('span', { style: { fontSize: '12px', fontVariantNumeric: 'tabular-nums' } }, total.toLocaleString('en-US')))
+      : null,
+    React.createElement(GitHubLink, null),
+  )
+}
+
+/** GitHub 图标链接。 */
 function GitHubLink() {
   return React.createElement('a', {
     href: GITHUB_REPO,
@@ -30,7 +73,6 @@ function GitHubLink() {
     style: {
       display: 'flex',
       alignItems: 'center',
-      marginLeft: 'auto',
       color: 'var(--dsw-alias-label-secondary, #8a8a92)',
     },
   }, React.createElement('svg', {
@@ -215,28 +257,7 @@ function ProviderCard(props) {
   return React.createElement('div', { style: CARD }, children)
 }
 
-/** npm 下载统计：打开设置页时自动拉取（服务端缓存 30 分钟）。 */
-function DownloadsLine() {
-  const [d, setD] = React.useState(null)
-  React.useEffect(() => {
-    let stopped = false
-    fetch('/api/im-connector/downloads')
-      .then((r) => r.json())
-      .then((j) => { if (!stopped) setD(j) })
-      .catch(() => { if (!stopped) setD({ ok: false }) })
-    return () => { stopped = true }
-  }, [])
-  const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '—')
-  const text = d === null
-    ? '⬇ npm 下载统计获取中…'
-    : d.ok
-      ? '⬇ npm 累计下载 ' + fmt(d.total) + ' · 最近一周 ' + fmt(d.lastWeek)
-      : '⬇ npm 下载统计暂不可用（网络原因，稍后再试）'
-  return React.createElement('div', {
-    style: { ...MUTED, textAlign: 'center', paddingTop: '6px' },
-    title: d && d.ok ? '统计区间 ' + (d.weekStart || '?') + ' ~ ' + (d.weekEnd || '?') + '，数据来自 api.npmjs.org，服务端缓存 30 分钟' : '数据来自 api.npmjs.org',
-  }, text)
-}
+/** npm 下载统计行（已由 HeaderLinks 取代，保留接口无引用）。 */
 
 function SettingsPage() {
   const [state, setState] = React.useState({ loading: true, error: '', providers: [] })
@@ -337,7 +358,7 @@ function SettingsPage() {
           `${authorizedCount}/${state.providers.length} 已登录`)
         : null,
       state.loading ? React.createElement('span', { style: LABEL }, '检测中…') : null,
-      React.createElement(GitHubLink, { key: 'github' }),
+      React.createElement(HeaderLinks, { key: 'links' }),
     ),
   ]
   if (state.error) {
@@ -352,7 +373,6 @@ function SettingsPage() {
       onRefresh: () => { refresh(true) },
     }))
   }
-  children.push(React.createElement(DownloadsLine, { key: 'downloads' }))
   return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', paddingBottom: '24px' } }, children)
 }
 
