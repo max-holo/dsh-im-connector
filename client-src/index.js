@@ -187,8 +187,25 @@ function authorizedOf(info) {
 // 1. Settings page
 // ---------------------------------------------------------------------------
 
+/**
+ * 是否被 DSH 官方插件详情页内嵌渲染（详情页会把插件的 settings.section
+ * 原样渲染进 [data-plugin-config] 容器）。内嵌时只保留功能区：
+ * 不显示登录状态徽标、下载量与外链图标。
+ */
+function useEmbeddedInPluginPage() {
+  const ref = React.useRef(null)
+  const [embedded, setEmbedded] = React.useState(false)
+  React.useEffect(() => {
+    const el = ref.current
+    if (el !== null && el !== undefined && typeof el.closest === 'function') {
+      setEmbedded(el.closest('[data-plugin-config]') !== null)
+    }
+  }, [])
+  return [ref, embedded]
+}
+
 function ProviderCard(props) {
-  const { info, session } = props
+  const { info, session, minimal } = props
   const authorized = authorizedOf(info)
   const busy = Boolean(session && session.busy)
   const running = Boolean(session && session.running)
@@ -196,7 +213,7 @@ function ProviderCard(props) {
   const children = [
     React.createElement('div', { style: HEADING, key: 'head' },
       React.createElement('div', { style: { fontSize: '14px', fontWeight: 600 } }, info.displayName || info.id),
-      React.createElement('span', { style: authorized ? PILL_OK : PILL_WARN }, authorized ? '已登录' : '未登录'),
+      minimal ? null : React.createElement('span', { style: authorized ? PILL_OK : PILL_WARN }, authorized ? '已登录' : '未登录'),
     ),
   ]
 
@@ -256,8 +273,6 @@ function ProviderCard(props) {
 
   return React.createElement('div', { style: CARD }, children)
 }
-
-/** npm 下载统计行（已由 HeaderLinks 取代，保留接口无引用）。 */
 
 function SettingsPage() {
   const [state, setState] = React.useState({ loading: true, error: '', providers: [] })
@@ -350,15 +365,16 @@ function SettingsPage() {
   }, [])
 
   const authorizedCount = state.providers.filter(authorizedOf).length
+  const [rootRef, embedded] = useEmbeddedInPluginPage()
   const children = [
     React.createElement('div', { style: HEADING, key: 'head' },
       React.createElement('div', { style: { fontSize: '15px', fontWeight: 600 } }, 'IM 连接器'),
-      state.providers.length > 0
-        ? React.createElement('span', { style: authorizedCount === state.providers.length ? PILL_OK : PILL_WARN },
-          `${authorizedCount}/${state.providers.length} 已登录`)
-        : null,
-      state.loading ? React.createElement('span', { style: LABEL }, '检测中…') : null,
-      React.createElement(HeaderLinks, { key: 'links' }),
+      embedded || state.providers.length === 0
+        ? null
+        : React.createElement('span', { style: authorizedCount === state.providers.length ? PILL_OK : PILL_WARN },
+          `${authorizedCount}/${state.providers.length} 已登录`),
+      embedded || !state.loading ? null : React.createElement('span', { style: LABEL }, '检测中…'),
+      embedded ? null : React.createElement(HeaderLinks, { key: 'links' }),
     ),
   ]
   if (state.error) {
@@ -369,11 +385,15 @@ function SettingsPage() {
       key: info.id,
       info,
       session: sessions[info.id],
+      minimal: embedded,
       onLogin: startLogin,
       onRefresh: () => { refresh(true) },
     }))
   }
-  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', paddingBottom: '24px' } }, children)
+  return React.createElement('div', {
+    ref: rootRef,
+    style: { display: 'flex', flexDirection: 'column', gap: '12px', paddingBottom: '24px' },
+  }, children)
 }
 
 // ---------------------------------------------------------------------------
